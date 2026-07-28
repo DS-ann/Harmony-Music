@@ -102,11 +102,12 @@ void main() {
     expect(find.text('First Song'), findsWidgets);
     expect(find.text('Second Song'), findsNothing);
 
-    // Step 3: the session lapses. The banner is the only thing that says so.
+    // Step 3: the session lapses. The banner is the only thing that says so —
+    // the stored account with no session is the whole condition, so dropping
+    // the profile is all it takes to reproduce a token that quietly expired.
     final authController = handle.container.read(authControllerProvider);
     await auth.logout();
     authController.userProfile = null;
-    authController.sessionExpired = true;
     authController.notifyListeners();
     await tester.pumpAndSettle();
 

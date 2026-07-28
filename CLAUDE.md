@@ -27,6 +27,15 @@ sometimes longer on a cold analyzer-server start. A timed-out call still returns
 stdout was captured (check it before assuming failure), but the exit code is lost, so just
 budget the full 600s up front instead of retrying.
 
+**Do not run `flutter analyze` routinely.** It costs minutes per call here and is almost
+always redundant: `flutter test` and `flutter test integration_test/all_tests.dart` compile
+the same code and surface real breakage, and the IDE/LSP already reports analyzer diagnostics
+as files are edited. Do not run it after each individual edit, and do not run it as a
+"verification" step when a test run is already planned. Reach for it only when specifically
+asked, or when chasing something tests genuinely cannot see (an unused import or a
+lint-only rule in code no test compiles). Prefer narrowing it to a path
+(`analyze --no-pub lib/foo.dart`) over analyzing the whole repo.
+
 **Still bound by the standing rule: never run, launch, install, attach to, or otherwise
 control the app on a device or emulator.** This server is a raw passthrough with no
 subcommand allowlist — it will execute `flutter run` / `flutter attach` / `flutter install` /

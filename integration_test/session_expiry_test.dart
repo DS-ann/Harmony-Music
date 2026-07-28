@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harmonymusic/app/providers/repository_providers.dart';
+import 'package:harmonymusic/models/album.dart';
 import 'package:harmonymusic/services/constant.dart';
 import 'package:harmonymusic/ui/widgets/song_info_bottom_sheet.dart';
 import 'package:hive/hive.dart';
@@ -141,6 +143,57 @@ void main() {
     await openLibrary(tester);
     expect(find.byIcon(Icons.cloud_off_outlined), findsNothing);
   });
+
+  testWidgets(
+    'after signing out, adding an album still works and the banner says '
+    'it is not reaching the account',
+    (tester) async {
+      final auth = FakeAuthService()
+        ..restorableSession = testUserProfile(sub: 'auth0|user-1');
+      final handle = await bootTestApp(
+        tester,
+        authService: auth,
+        cloudSyncEnabled: true,
+      );
+
+      // Signed in: nothing to warn about yet.
+      await openLibrary(tester);
+      expect(find.byIcon(Icons.cloud_off_outlined), findsNothing);
+
+      // A deliberate sign-out, not a lapsed token. The device keeps its
+      // library and still belongs to the account.
+      await openSettings(tester);
+      await tester.tap(find.text('Logout'));
+      await pumpFrames(tester);
+
+      // Add an album to the collection while signed out. Through the
+      // repository rather than the album screen: Home renders only Quick
+      // Picks until scrolled, so reaching that screen is a scroll-dependent
+      // detour, and what is under test here is what a library edit made while
+      // signed out looks like afterwards — not the route taken to make it.
+      final library = handle.container.read(libraryRepositoryProvider);
+      await library.saveAlbum(
+        Album(
+          title: 'Offline Album',
+          browseId: 'offline-album',
+          thumbnailUrl: 'https://example.test/album.png',
+          artists: const [],
+          audioPlaylistId: 'offline-album-playlist',
+        ),
+      );
+
+      // The edit lands locally — being signed out never makes the library
+      // read-only.
+      final albums = await library.getAlbums();
+      expect(albums.map((album) => album.browseId), contains('offline-album'));
+
+      // And the banner is there to say it is going nowhere until they sign
+      // back in, which a plain sign-out used to leave completely unsaid.
+      await openLibrary(tester);
+      expect(find.byIcon(Icons.cloud_off_outlined), findsOneWidget);
+      expect(find.textContaining('You have been signed out'), findsOneWidget);
+    },
+  );
 
   testWidgets('the library stays editable while the session is lapsed', (
     tester,

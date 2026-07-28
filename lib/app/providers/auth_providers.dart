@@ -95,15 +95,10 @@ class AuthController extends ChangeNotifier {
   bool isBusy = false;
   String? errorMessage;
 
-  /// Set when a session that used to exist could not be restored. Nothing else
-  /// told the user: sync simply stopped working and the library quietly stopped
-  /// reaching the account.
-  bool sessionExpired = false;
-
   /// Whether the user has dismissed the Library banner for this app run.
   ///
-  /// Deliberately separate from [sessionExpired]: dismissing the banner is
-  /// "stop interrupting me", not "this is resolved". Folding both into one
+  /// Deliberately separate from [needsReauthentication]: dismissing the banner
+  /// is "stop interrupting me", not "this is resolved". Folding both into one
   /// flag also cleared the settings badge, which is the one thing meant to
   /// persist until the session is genuinely restored.
   bool sessionExpiredNoticeDismissed = false;
@@ -118,9 +113,17 @@ class AuthController extends ChangeNotifier {
   /// The account this device's library belongs to, even while signed out.
   String? get accountSubject => _settings.getCloudAccountSubject();
 
-  /// Whether a previously signed-in session has lapsed and sync is stalled.
-  /// Drives the settings badge, which stays until the user signs back in.
-  bool get needsReauthentication => sessionExpired && !isAuthenticated;
+  /// Whether this device belongs to an account nobody is currently signed in
+  /// to, with sync turned on — so library edits are piling up locally and
+  /// reaching no account. Drives the settings badge, which stays until the
+  /// user signs back in.
+  ///
+  /// Derived rather than flagged, because the state is the same however it was
+  /// arrived at: a token that quietly lapsed, or a deliberate sign-out. Only
+  /// the first of those used to say anything, so signing out and carrying on
+  /// adding albums looked exactly like a working, syncing library.
+  bool get needsReauthentication =>
+      !isAuthenticated && accountSubject != null && cloudSyncEnabled;
 
   /// Whether the Library banner should be shown — the same state, minus the
   /// interruption once the user has acknowledged it.
@@ -156,7 +159,6 @@ class AuthController extends ChangeNotifier {
 
   Future<void> init() async {
     userProfile = await _service.tryRestoreSession();
-    final knownAccount = _settings.getCloudAccountSubject();
     if (userProfile != null) {
       // A restored session is by definition the account this device already
       // belongs to. Recording it here — rather than treating a missing subject
@@ -165,11 +167,9 @@ class AuthController extends ChangeNotifier {
       await _settings.setCloudAccountSubject(userProfile!.sub);
       unawaited(_activateDeviceControl());
       if (_cloud.enabled) unawaited(_startCloudSync());
-    } else if (knownAccount != null && _cloud.enabled) {
-      // Signed in before, cannot be restored now: the token lapsed. Sync will
-      // fail until the user signs back in, so say so instead of failing mutely.
-      sessionExpired = true;
     }
+    // A stored account with no restorable session means the token lapsed; the
+    // banner follows from that state rather than needing to be flagged here.
     notifyListeners();
   }
 
@@ -183,7 +183,6 @@ class AuthController extends ChangeNotifier {
     userProfile = await _service.login();
     final subject = userProfile?.sub;
     if (subject == null) return;
-    sessionExpired = false;
     sessionExpiredNoticeDismissed = false;
 
     if (previousAccount != null && previousAccount != subject) {
@@ -209,6 +208,10 @@ class AuthController extends ChangeNotifier {
     await _cloud.stop();
     await _service.logout();
     userProfile = null;
+    // The device keeps its library and its account subject, so edits made from
+    // here on reach nobody until the user signs back in. Re-arm the notice: a
+    // dismissal earlier in this run answered a different sign-out.
+    sessionExpiredNoticeDismissed = false;
   });
 
   Future<void> setCloudSyncEnabled(bool value) async {
