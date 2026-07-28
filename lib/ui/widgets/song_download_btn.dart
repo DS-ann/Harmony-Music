@@ -10,6 +10,7 @@ import '../../app/providers/service_providers.dart';
 
 import 'loader.dart';
 import 'snackbar.dart';
+import 'unliked_download_dialog.dart';
 
 class SongDownloadButton extends ConsumerWidget {
   const SongDownloadButton({
@@ -170,6 +171,13 @@ class SongDownloadButton extends ConsumerWidget {
                           ),
                         );
                       } else {
+                        final choice = await maybeAskAboutUnlikedDownload(
+                          context: context,
+                          song: song,
+                          settings: ref.read(settingsRepositoryProvider),
+                          library: ref.read(libraryRepositoryProvider),
+                        );
+                        if (choice == UnlikedDownloadChoice.cancel) return;
                         await downloader.download(song);
                       }
                     },

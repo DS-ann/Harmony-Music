@@ -3,6 +3,14 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// google-services.json contains the Firebase project credentials and is kept
+// out of source control. Allow local debug/profile builds without it; FCM
+// simply remains unavailable until a developer adds their own configuration.
+def hasGoogleServicesJson = file('google-services.json').exists()
+if (hasGoogleServicesJson) {
+    apply plugin: 'com.google.gms.google-services'
+}
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -103,6 +111,17 @@ android {
 
 flutter {
     source '../..'
+}
+
+tasks.configureEach { task ->
+    if (!hasGoogleServicesJson && task.name.toLowerCase().contains('release')) {
+        task.doFirst {
+            throw new GradleException(
+                'android/app/google-services.json is required for release builds. '
+                + 'Download it from the Firebase project settings before publishing.'
+            )
+        }
+    }
 }
 
 kotlin {

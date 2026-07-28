@@ -18,15 +18,17 @@ dependencies:
   audio_video_progress_bar: ^2.0.3
   buttons_tabbar: ^1.3.15
   cached_network_image: ^3.4.1
-  battery_plus: 7.0.0
-  connectivity_plus: ^6.1.5
   dio: ^5.10.0
+  web_socket_channel: ^3.0.3
   file_selector: ^1.1.0
   file_picker: ^11.0.2
+  firebase_core: ^3.15.2
+  firebase_messaging: ^15.2.9
   flutter:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  flutter_rust_bridge: 2.11.1
   flutter_riverpod: ^3.3.2
   flutter_keyboard_visibility: ^6.0.0
   flutter_lyric: ^3.0.7
@@ -42,9 +44,7 @@ dependencies:
   just_audio:
     path: third_party/just_audio
   just_audio_media_kit:
-    git:
-      url: https://github.com/anandnet/just_audio_media_kit.git
-      ref: 6672eb82657d9e671abbf42122031c88aa9e6d80
+    path: third_party/just_audio_media_kit
   path: ^1.9.1
   path_provider: ^2.1.6
   permission_handler: ^12.0.3

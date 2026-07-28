@@ -8,6 +8,13 @@ abstract class LibraryRepository {
   Future<List<MediaItem>> getDownloadedSongs();
   Future<List<MediaItem>> getAllLibrarySongs();
 
+  /// The Songs tab's list: downloads, optionally the song cache, narrowed to
+  /// the account's liked songs when [likedOnly].
+  Future<List<MediaItem>> getSongsTabList({
+    required bool likedOnly,
+    required bool includeCached,
+  });
+
   /// Writes [duration] into the stored cached/downloaded copies of [songId]
   /// when they were saved without one (some sources omit duration until the
   /// track is actually played). Existing durations are left untouched.
@@ -16,6 +23,9 @@ abstract class LibraryRepository {
   Future<void> deleteCachedSong(String songId);
   Future<void> deleteDownloadedSong(String songId);
   Future<bool> isDownloaded(String songId);
+
+  /// Drops download records that name no local file, returning how many went.
+  Future<int> purgeDownloadsWithoutLocalFile();
   Future<bool> isFavorite(String songId);
   Future<void> setFavorite(MediaItem song, bool favorite);
   Future<List<MediaItem>> getFavoriteSongs();

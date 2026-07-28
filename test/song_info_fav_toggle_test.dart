@@ -30,7 +30,10 @@ void main() {
         'isCurrentSongFav = !isCurrentSongFav;',
         setFavoriteIndex,
       );
-      final notifyIndex = toggleFavBody.indexOf('notifyListeners();', flipIndex);
+      final notifyIndex = toggleFavBody.indexOf(
+        'notifyListeners();',
+        flipIndex,
+      );
       final autoDownloadIndex = toggleFavBody.indexOf(
         '_downloader.download(song)',
         notifyIndex,

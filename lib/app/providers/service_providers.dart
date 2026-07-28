@@ -5,6 +5,7 @@ import '../../services/app_contracts.dart';
 import '../../services/app_platform_service.dart';
 import '../../services/downloader.dart';
 import '../../services/file_picker_service.dart';
+import '../../services/metadata/song_metadata_service.dart';
 import '../../services/music_service.dart';
 import '../../services/piped_service.dart';
 import '../../services/playback_command_service.dart';
@@ -54,7 +55,16 @@ final downloaderProvider = Provider<Downloader>(
     ref.watch(downloadRepositoryProvider),
     ref.watch(settingsRepositoryProvider),
     ref.watch(resolverClientProvider),
-    ref.watch(downloadRetryRepositoryProvider),
+  ),
+);
+
+final songMetadataServiceProvider = Provider<SongMetadataService>(
+  (ref) => SongMetadataService(
+    music: ref.watch(musicServiceContractProvider),
+    songCache: ref.watch(songCacheRepositoryProvider),
+    downloads: ref.watch(downloadRepositoryProvider),
+    resolverClient: ref.watch(resolverClientProvider),
+    settings: ref.watch(settingsRepositoryProvider),
   ),
 );
 
@@ -62,5 +72,6 @@ final playbackCommandServiceProvider = Provider<PlaybackCommandService>(
   (ref) => PlaybackCommandService(
     audioHandler: ref.read(audioHandlerProvider),
     settingsRepository: ref.read(settingsRepositoryProvider),
+    cloudSync: ref.read(cloudSyncCoordinatorProvider),
   ),
 );

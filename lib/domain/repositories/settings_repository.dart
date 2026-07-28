@@ -36,6 +36,29 @@ abstract class SettingsRepository {
   Future<void> setShuffleModeEnabled(bool value);
   int getVolume({int defaultValue = 100});
   Future<void> setVolume(int value);
+
+  /// Which one-off song-cache purges this install has already run. See
+  /// `removeThinCachedSongs`.
+  int getSongCachePurgeVersion();
+  Future<void> setSongCachePurgeVersion(int value);
+
+  /// The account this device's synced library belongs to, or null if it has
+  /// never been signed in. Survives sign-out so the Songs filter still has an
+  /// account to scope to, and so an account switch is distinguishable.
+  String? getCloudAccountSubject();
+  Future<void> setCloudAccountSubject(String value);
+
+  /// Songs tab filters. Device-scoped: they describe local content, and each
+  /// device holds a different set of files.
+  bool getSongsShowUnlikedDownloads();
+  Future<void> setSongsShowUnlikedDownloads(bool value);
+  bool getSongsIncludeCached();
+  Future<void> setSongsIncludeCached(bool value);
+
+  /// Whether the user has dismissed the notice explaining that downloads only
+  /// appear in Songs once they are in the account's library.
+  bool getUnlikedDownloadNoticeDismissed();
+  Future<void> setUnlikedDownloadNoticeDismissed(bool value);
   bool getBottomNavBarEnabled();
   Future<void> setBottomNavBarEnabled(bool value);
   int getNoOfHomeScreenContent();

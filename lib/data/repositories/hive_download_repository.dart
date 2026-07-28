@@ -8,9 +8,24 @@ import '../../services/constant.dart';
 class HiveDownloadRepository implements DownloadRepository {
   Box get _box => Hive.box(BoxNames.songDownloads);
 
+  /// True only when the entry names a local file.
+  ///
+  /// Key presence alone is not enough: downloads used to sync between devices,
+  /// and the payload sanitizer strips local paths, so a device could hold a
+  /// download record with no `url` and no audio behind it. Those must read as
+  /// not-downloaded, or the UI badges them as offline-ready and the downloader
+  /// refuses to fetch them. Existence on disk is deliberately not checked here
+  /// — this runs per song while rendering lists, and a temporarily unreachable
+  /// file (missing storage permission, unmounted SD card) is handled further
+  /// down, where playback falls back to streaming.
+  static bool hasLocalFile(dynamic entry) =>
+      entry is Map &&
+      entry['url'] is String &&
+      (entry['url'] as String).isNotEmpty;
+
   @override
   Future<bool> containsDownload(String songId) async =>
-      _box.containsKey(songId);
+      hasLocalFile(_box.get(songId));
 
   @override
   Future<dynamic> getDownloadJson(String songId) async => _box.get(songId);

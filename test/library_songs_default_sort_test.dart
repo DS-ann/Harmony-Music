@@ -4,6 +4,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harmonymusic/domain/repositories/download_repository.dart';
 import 'package:harmonymusic/domain/repositories/library_repository.dart';
+import 'package:harmonymusic/domain/repositories/settings_repository.dart';
 import 'package:harmonymusic/domain/repositories/song_cache_repository.dart';
 import 'package:harmonymusic/ui/screens/Library/library_controller.dart';
 import 'package:harmonymusic/ui/widgets/sort_widget.dart';
@@ -163,10 +164,7 @@ void main() {
       final controller = _librarySongsController();
       controller.librarySongsList = [_song('kalasi', 'Kalasi', 1000)];
 
-      controller.applyResolvedDuration(
-        'kalasi',
-        const Duration(seconds: 148),
-      );
+      controller.applyResolvedDuration('kalasi', const Duration(seconds: 148));
 
       expect(
         controller.librarySongsList.single.duration,
@@ -177,14 +175,14 @@ void main() {
     test('never overwrites a duration the song already has', () {
       final controller = _librarySongsController();
       controller.librarySongsList = [
-        _song('kalasi', 'Kalasi', 1000)
-            .copyWith(duration: const Duration(seconds: 200)),
+        _song(
+          'kalasi',
+          'Kalasi',
+          1000,
+        ).copyWith(duration: const Duration(seconds: 200)),
       ];
 
-      controller.applyResolvedDuration(
-        'kalasi',
-        const Duration(seconds: 148),
-      );
+      controller.applyResolvedDuration('kalasi', const Duration(seconds: 148));
 
       expect(
         controller.librarySongsList.single.duration,
@@ -211,14 +209,12 @@ void main() {
       controller.onSearchStart(LibrarySongsController.sortWidgetTag);
       controller.onSearch('Kalasi', LibrarySongsController.sortWidgetTag);
 
-      controller.applyResolvedDuration(
-        'kalasi',
-        const Duration(seconds: 148),
-      );
+      controller.applyResolvedDuration('kalasi', const Duration(seconds: 148));
       controller.onSearchClose(LibrarySongsController.sortWidgetTag);
 
-      final kalasi =
-          controller.librarySongsList.firstWhere((s) => s.id == 'kalasi');
+      final kalasi = controller.librarySongsList.firstWhere(
+        (s) => s.id == 'kalasi',
+      );
       expect(kalasi.duration, const Duration(seconds: 148));
     });
   });
@@ -265,6 +261,7 @@ LibrarySongsController _librarySongsController() {
     downloadRepository: _FakeDownloadRepository(),
     libraryRepository: _FakeLibraryRepository(),
     songCacheRepository: _FakeSongCacheRepository(),
+    settingsRepository: _FakeSettingsRepository(),
   );
 }
 
@@ -279,6 +276,11 @@ class _FakeSongCacheRepository implements SongCacheRepository {
 }
 
 class _FakeLibraryRepository implements LibraryRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeSettingsRepository implements SettingsRepository {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

@@ -1,4 +1,5 @@
 import 'package:audio_service/audio_service.dart';
+import 'package:auth0_flutter/auth0_flutter.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../utils/helper.dart';
@@ -24,6 +25,9 @@ abstract class MusicServiceContract {
   });
 
   Future<List> getSongWithId(String songId);
+
+  /// One round trip, one song. Returns null when the id has no usable metadata.
+  Future<MediaItem?> resolveSongMetadata(String songId);
 
   Future<Map<String, dynamic>> getWatchPlaylist({
     String videoId = "",
@@ -111,6 +115,30 @@ class AppPlatformInfo {
   final String packageName;
   final String version;
   final String buildNumber;
+}
+
+/// The auth boundary, extracted purely so a fake can stand in for
+/// `Auth0Service` in tests — every other external boundary
+/// (`MusicServiceContract`, `AppPlatformContract`, ...) already has one for
+/// exactly this reason. `Auth0Service` implements this unchanged; production
+/// wiring is untouched.
+abstract class AuthServiceContract {
+  bool get isConfigured;
+
+  bool get isSupportedPlatform;
+
+  bool get isAvailable;
+
+  /// Restores a previously-authenticated session, or null if none exists (or
+  /// none could be restored — an expired token reads the same as never having
+  /// signed in from this method's point of view).
+  Future<UserProfile?> tryRestoreSession();
+
+  Future<UserProfile> login();
+
+  Future<void> logout();
+
+  Future<String?> accessToken({bool forceRefresh = false});
 }
 
 abstract class FilePickerContract {

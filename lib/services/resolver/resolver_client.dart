@@ -50,6 +50,44 @@ class ResolverClient {
     );
   }
 
+  /// Batch display metadata for a queue. Ids the Resolver has never seen come
+  /// back with status `missing` — the caller is expected to fall back to its own
+  /// resolution path rather than treat that as an error.
+  Future<Map<String, Map<String, dynamic>>> metadataBatch(
+    Uri baseUrl,
+    List<String> videoIds,
+  ) async {
+    if (videoIds.isEmpty) return const {};
+    final options = await authorizedOptions(
+      baseUrl,
+      headers: const {'Content-Type': 'application/json'},
+    );
+    final response = await _dio.postUri<Map<String, dynamic>>(
+      baseUrl.resolve('v1/tracks/metadata:batch'),
+      data: {
+        'videoIds': videoIds.take(metadataBatchLimit).toList(growable: false),
+      },
+      options: Options(
+        headers: options.headers,
+        sendTimeout: const Duration(seconds: 8),
+        receiveTimeout: const Duration(seconds: 8),
+      ),
+    );
+    final tracks = response.data?['tracks'];
+    if (tracks is! List) return const {};
+    final resolved = <String, Map<String, dynamic>>{};
+    for (final track in tracks.whereType<Map>()) {
+      if (track['status'] != 'ready') continue;
+      final videoId = track['videoId']?.toString();
+      if (videoId == null || videoId.isEmpty) continue;
+      resolved[videoId] = Map<String, dynamic>.from(track);
+    }
+    return resolved;
+  }
+
+  /// Mirrors the server-side cap on `v1/tracks/metadata:batch`.
+  static const metadataBatchLimit = 100;
+
   /// Asks Resolver to make the track available for future playback without
   /// delaying the app's existing local downloader when the service is busy.
   Future<void> prefetch(Uri baseUrl, List<String> videoIds) async {

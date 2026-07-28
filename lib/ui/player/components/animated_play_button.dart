@@ -85,13 +85,15 @@ class _AnimatedPlayButtonState extends ConsumerState<AnimatedPlayButton>
 
         return IconButton(
           iconSize: widget.iconSize,
-          onPressed: () {
-            if (isPlaying) {
-              controller.requestPause();
-            } else {
-              controller.requestPlay();
-            }
-          },
+          onPressed: isLoading
+              ? null
+              : () {
+                  if (isPlaying) {
+                    controller.requestPause();
+                  } else {
+                    controller.requestPlay();
+                  }
+                },
           icon: isLoading
               ? const LoadingIndicator(dimension: 20)
               : AnimatedIcon(

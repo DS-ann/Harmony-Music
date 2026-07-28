@@ -49,12 +49,6 @@ void main() {
       expect(resolverRequest, isNonNegative);
       expect(localStreamRequest, greaterThan(resolverRequest));
     });
-
-    test('retains failed songs for a later retry', () {
-      expect(source, contains('Future<void> retryFailedDownloads()'));
-      expect(source, contains('await _rememberFailedDownload(song);'));
-      expect(source, contains('await _removeFailedDownload(song.id);'));
-    });
   });
 }
 

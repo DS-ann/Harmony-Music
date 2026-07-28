@@ -53,8 +53,7 @@ class RestorePathResolver {
     return null;
   }
 
-  static String _normalizeSeparators(String path) =>
-      path.replaceAll('\\', '/');
+  static String _normalizeSeparators(String path) => path.replaceAll('\\', '/');
 }
 
 Future<void> rewriteRestoredDownloadPaths({

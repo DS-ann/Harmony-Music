@@ -10,6 +10,7 @@ import '../../domain/repositories/library_repository.dart';
 import '../../domain/repositories/lyrics_repository.dart';
 import '../../domain/repositories/playback_session_repository.dart';
 import '../../domain/repositories/settings_repository.dart';
+import '../../models/media_Item_builder.dart';
 import '../../models/playing_from.dart';
 
 import '../../app/navigation/app_navigator.dart';
@@ -18,9 +19,12 @@ import '../../services/downloader.dart';
 import '../../services/listen_together/listen_together_gate.dart';
 import '../../services/listen_together/session_message.dart';
 import '../../services/listen_together/session_payload.dart';
+import '../../services/cloud/playback_socket_client.dart';
 import '../../services/playback_command_service.dart';
+import '../../services/previous_track_policy.dart';
 import '../../utils/runtime_platform.dart';
 import '../../utils/observable_state.dart';
+import 'remote_progress_anchor.dart';
 import '../screens/Library/library_controller.dart';
 import '../screens/Playlist/playlist_screen_controller.dart';
 import '../widgets/snackbar.dart';
@@ -121,9 +125,619 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       song != null &&
       song.playable == true &&
       song.id.trim().isNotEmpty &&
-      song.title.trim().isNotEmpty;
+      (song.title.trim().isNotEmpty || MediaItemBuilder.isResolving(song));
 
   bool get hasDisplayableCurrentSong => isDisplayableSong(currentSong.value);
+
+  /// True only when we do not yet know *what* this song is.
+  ///
+  /// Deliberately independent of [buttonState]: a seek or a previous-button
+  /// restart on an already-resolved (often cached) song makes the audio engine
+  /// emit a transient buffering event, and folding that in collapsed a title we
+  /// already had into shimmer bars. Audio being busy is the play button's
+  /// business, not the title's.
+  bool get isCurrentSongLoading {
+    final song = currentSong.value;
+    if (song == null) return false;
+    return MediaItemBuilder.isResolving(song) || song.title.trim().isEmpty;
+  }
+
+  int? beginRemoteSongTransition(List<MediaItem> queue, int index) {
+    if (!_playbackCommands.isRemoteControlActive ||
+        queue.isEmpty ||
+        index < 0 ||
+        index >= queue.length) {
+      return null;
+    }
+    // Previous can pass [currentQueue] itself. Snapshot before mutating the
+    // observable queue; otherwise clear() also empties the input list and the
+    // subsequent index lookup throws a RangeError.
+    final nextQueue = List<MediaItem>.from(queue);
+    _remoteTransitionRollback ??= _RemoteSongTransitionSnapshot(
+      queue: List<MediaItem>.from(currentQueue),
+      index: currentSongIndex.value,
+      song: currentSong.value,
+      progress: ProgressBarState(
+        current: progressBarStatus.value.current,
+        buffered: progressBarStatus.value.buffered,
+        total: progressBarStatus.value.total,
+      ),
+      buttonState: buttonState.value,
+      isFavorite: isCurrentSongFav.value,
+      remoteAnchor: _remoteAnchor,
+      wasProgressTicking: _remoteProgressTicker != null,
+    );
+    final generation = ++_remoteSongTransitionGeneration;
+    _pendingRemoteSongId = nextQueue[index].id;
+    _stopRemoteProgressTicker();
+    _optimisticSeekIssuedAt = null;
+    currentQueue
+      ..clear()
+      ..addAll(nextQueue);
+    currentQueue.refresh();
+    currentSongIndex.value = index;
+    _setCurrentSongAndRefreshFavorite(nextQueue[index]);
+    progressBarStatus.update((value) {
+      value.current = Duration.zero;
+      value.buffered = Duration.zero;
+      value.total = nextQueue[index].duration ?? Duration.zero;
+    });
+    _currentSongResolving = true;
+    _setButtonState(PlayButtonState.loading);
+    _clearLyricsForSongChange();
+    _notifyPlayerChanged();
+    return generation;
+  }
+
+  void failRemoteSongTransition(int? generation) {
+    if (generation == null ||
+        generation != _remoteSongTransitionGeneration ||
+        _pendingRemoteSongId == null) {
+      return;
+    }
+    final rollback = _remoteTransitionRollback;
+    _pendingRemoteSongId = null;
+    _remoteTransitionRollback = null;
+    _currentSongResolving = false;
+    if (rollback == null) return;
+    currentQueue
+      ..clear()
+      ..addAll(rollback.queue);
+    currentQueue.refresh();
+    currentSongIndex.value = rollback.index;
+    currentSong.value = rollback.song;
+    isCurrentSongFav.value = rollback.isFavorite;
+    progressBarStatus.value = rollback.progress;
+    _remoteAnchor = rollback.remoteAnchor;
+    _setButtonState(rollback.buttonState);
+    if (rollback.wasProgressTicking) _startRemoteProgressTicker();
+    _notifyPlayerChanged();
+  }
+
+  void _confirmRemoteSongTransition() {
+    _pendingRemoteSongId = null;
+    _remoteTransitionRollback = null;
+    _currentSongResolving = false;
+  }
+
+  int _remoteSongTransitionGeneration = 0;
+  String? _pendingRemoteSongId;
+  _RemoteSongTransitionSnapshot? _remoteTransitionRollback;
+
+  void _setCurrentSongAndRefreshFavorite(MediaItem song) {
+    if (currentSong.value?.id != song.id) {
+      isCurrentSongFav.value = false;
+    }
+    // Same id, richer content is the normal case here — a placeholder being
+    // replaced by resolved metadata. A plain assignment compares equal and is
+    // discarded, which is what pinned the title and artist on shimmer.
+    currentSong.overwrite(song);
+    _logSurface('song');
+    unawaited(_checkFavFor(song));
+  }
+
+  /// Mirrors the whole queue published by the active account playback target,
+  /// without starting a local audio engine on this controller.
+  ///
+  /// Items usually arrive as placeholders and are filled in by
+  /// [mergeResolvedQueueItems] as metadata resolves. The full queue matters
+  /// beyond cosmetics: next/previous are enabled by comparing the current song
+  /// against `currentQueue.last`, so a one-item mirror disables both buttons.
+  void applyRemoteQueue(
+    List<MediaItem> queue, {
+    required int index,
+    required int positionMs,
+    int? durationMs,
+    required bool playing,
+  }) {
+    final pendingSongId = _pendingRemoteSongId;
+    final safeIndex = queue.isEmpty ? -1 : index.clamp(0, queue.length - 1);
+    if (pendingSongId != null &&
+        (safeIndex < 0 || queue[safeIndex].id != pendingSongId)) {
+      return;
+    }
+    _cloudRemoteStateActive = true;
+    currentQueue
+      ..clear()
+      ..addAll(queue);
+    currentQueue.refresh();
+    currentSongIndex.value = safeIndex;
+    if (safeIndex >= 0) {
+      _setCurrentSongAndRefreshFavorite(queue[safeIndex]);
+    }
+    applyRemoteProgress({
+      'positionMs': positionMs,
+      'durationMs': durationMs,
+      'playing': playing,
+      'publishedAtMs': DateTime.now().millisecondsSinceEpoch,
+    });
+    _notifyPlayerChanged();
+  }
+
+  /// Follows the audio target moving within a queue we already hold, without
+  /// rebuilding it — a skip on the target must not reset resolved metadata.
+  void applyRemoteIndex(int index) {
+    if (!_cloudRemoteStateActive || currentQueue.isEmpty) return;
+    final safeIndex = index.clamp(0, currentQueue.length - 1);
+    final pendingSongId = _pendingRemoteSongId;
+    if (pendingSongId != null && currentQueue[safeIndex].id != pendingSongId) {
+      return;
+    }
+    if (currentSongIndex.value == safeIndex) return;
+    currentSongIndex.value = safeIndex;
+    _setCurrentSongAndRefreshFavorite(currentQueue[safeIndex]);
+    _notifyPlayerChanged();
+  }
+
+  /// Swaps resolved metadata into the mirrored queue in place, preserving order
+  /// and the current index.
+  void mergeResolvedQueueItems(Map<String, MediaItem> resolved) {
+    if (!_cloudRemoteStateActive || resolved.isEmpty) {
+      printINFO(
+        'mergeResolved skipped mirroring=$_cloudRemoteStateActive '
+        'items=${resolved.length}',
+        tag: LogTags.cloudPlayback,
+      );
+      return;
+    }
+    var changed = false;
+    for (var i = 0; i < currentQueue.length; i++) {
+      final replacement = resolved[currentQueue[i].id];
+      if (replacement == null) continue;
+      currentQueue[i] = replacement;
+      changed = true;
+      if (i == currentSongIndex.value) {
+        _setCurrentSongAndRefreshFavorite(replacement);
+        final total = replacement.duration;
+        if (total != null && total > Duration.zero) {
+          progressBarStatus.update((value) => value.total = total);
+        }
+      }
+    }
+    printINFO(
+      'mergeResolved items=${resolved.length} changed=$changed '
+      'currentIndex=${currentSongIndex.value} '
+      'currentNowResolving='
+      '${currentSong.value == null ? null : MediaItemBuilder.isResolving(currentSong.value!)}',
+      tag: LogTags.cloudPlayback,
+    );
+    if (!changed) return;
+    currentQueue.refresh();
+    _logSurface('merge');
+    _notifyPlayerChanged();
+  }
+
+  /// Applies a progress sample from the audio target and re-anchors the local
+  /// extrapolator.
+  ///
+  /// Samples arrive every couple of seconds; without extrapolation the bar would
+  /// visibly step rather than sweep.
+  void applyRemoteProgress(Map<String, dynamic> progress) {
+    _cloudRemoteStateActive = true;
+    final songId = progress['currentSongId']?.toString();
+    final pendingSongId = _pendingRemoteSongId;
+    if (pendingSongId != null && songId != pendingSongId) {
+      return;
+    }
+    _applyRemoteSongMetadata(songId, progress['songMetadata']);
+    // While an optimistic seek is outstanding, frames sampled BEFORE the target
+    // applied it still carry the old position. Applying one yanks the bar back
+    // to where it was, then the post-seek frame snaps it forward again — the
+    // visible flicker when seeking a remote device. Position is the tell:
+    // pre-seek samples sit far from where we just asked to be.
+    final optimisticAt = _optimisticSeekIssuedAt;
+    if (optimisticAt != null) {
+      final sampleMs = (progress['positionMs'] as num?)?.toInt() ?? 0;
+      final withinWindow =
+          DateTime.now().difference(optimisticAt) <
+          _optimisticSeekConfirmWindow;
+      if (!withinWindow) {
+        _optimisticSeekIssuedAt = null;
+      } else if ((sampleMs - _optimisticSeekPosition.inMilliseconds).abs() >
+          3000) {
+        return;
+      } else {
+        // The target reports roughly the seeked position: confirmed.
+        _optimisticSeekIssuedAt = null;
+      }
+    }
+    if (songId != null && songId != currentSong.value?.id) {
+      final index = currentQueue.indexWhere((item) => item.id == songId);
+      if (index >= 0) {
+        currentSongIndex.value = index;
+        _setCurrentSongAndRefreshFavorite(currentQueue[index]);
+      }
+    }
+
+    final durationMs = (progress['durationMs'] as num?)?.toInt();
+    final playing = progress['playing'] == true;
+    final loading =
+        progress['loading'] == true ||
+        (currentSong.value != null &&
+            MediaItemBuilder.isResolving(currentSong.value!));
+    final reportedPositionMs = (progress['positionMs'] as num?)?.toInt() ?? 0;
+    final positionMs = reportedPositionMs;
+    final speed = (progress['speed'] as num?)?.toDouble() ?? 1.0;
+    final publishedAtMs = (progress['publishedAtMs'] as num?)?.toInt();
+
+    progressBarStatus.update((value) {
+      if (!loading && durationMs != null && durationMs > 0) {
+        value.total = Duration(milliseconds: durationMs);
+      } else if (currentSong.value?.duration case final total?) {
+        value.total = total;
+      }
+      value.current = _clampProgressPosition(
+        Duration(milliseconds: positionMs < 0 ? 0 : positionMs),
+        value.total,
+      );
+      // Nothing reports buffering for a remote device; showing the played
+      // position keeps the bar from rendering a permanently empty buffer.
+      value.buffered = value.current;
+    });
+
+    _remoteAnchor = RemoteProgressAnchor.fromSample(
+      positionMs: positionMs,
+      speed: speed,
+      publishedAtMs: publishedAtMs,
+      now: DateTime.now(),
+    );
+    if (pendingSongId != null && !loading) {
+      _confirmRemoteSongTransition();
+    }
+    _currentSongResolving = loading;
+    _setButtonState(
+      loading
+          ? PlayButtonState.loading
+          : playing
+          ? PlayButtonState.playing
+          : PlayButtonState.paused,
+    );
+    if (playing && !loading) {
+      _startRemoteProgressTicker();
+    } else {
+      _stopRemoteProgressTicker();
+    }
+    _syncRemoteMediaNotification(
+      currentSong.value,
+      playing: playing,
+      loading: loading,
+      position: Duration(milliseconds: positionMs < 0 ? 0 : positionMs),
+    );
+    _notifyPlayerChanged();
+  }
+
+  void _syncRemoteMediaNotification(
+    MediaItem? song, {
+    required bool playing,
+    required bool loading,
+    required Duration position,
+  }) {
+    if (!RuntimePlatform.isAndroid || song == null) return;
+    unawaited(
+      _audioHandler.customAction('setRemoteNotificationMirror', {
+        'mediaItem': song,
+        'playing': playing,
+        'loading': loading,
+        'positionMs': position.inMilliseconds,
+      }),
+    );
+  }
+
+  void _applyRemoteSongMetadata(String? songId, Object? rawMetadata) {
+    if (songId == null || rawMetadata is! Map) {
+      _logRemoteMetadata(songId, 'no metadata in frame');
+      return;
+    }
+    final metadata = Map<String, dynamic>.from(rawMetadata);
+    if (metadata['id']?.toString() != songId) {
+      _logRemoteMetadata(songId, 'id mismatch ${metadata['id']}');
+      return;
+    }
+    final title = metadata['title']?.toString() ?? '';
+    // Empty metadata is the required resolving placeholder, not a settled
+    // description that should replace the optimistic item.
+    if (title.trim().isEmpty) {
+      _logRemoteMetadata(songId, 'target still publishing an empty title');
+      return;
+    }
+    _logRemoteMetadata(songId, 'applying "$title"');
+
+    final queueIndex = currentQueue.indexWhere((item) => item.id == songId);
+    final visibleSong = currentSong.value;
+    final MediaItem base;
+    if (queueIndex >= 0) {
+      base = currentQueue[queueIndex];
+    } else if (visibleSong != null && visibleSong.id == songId) {
+      base = visibleSong;
+    } else {
+      base = MediaItemBuilder.placeholder(songId);
+    }
+
+    final durationMs = (metadata['durationMs'] as num?)?.toInt();
+    final artworkValue = metadata['artworkUri']?.toString();
+    final artworkUri = artworkValue == null || artworkValue.isEmpty
+        ? null
+        : Uri.tryParse(artworkValue);
+    // A frame that carries no usable artwork says nothing about the song's
+    // artwork — it is an id-only session, and the cover was resolved locally by
+    // the backfill. Falling back to null here replaced a correct cover with the
+    // placeholder every time a metadata frame arrived without one.
+    final safeArtworkUri =
+        artworkUri != null &&
+            (artworkUri.scheme == 'https' || artworkUri.scheme == 'http')
+        ? artworkUri
+        : base.artUri;
+    final targetDuration = durationMs != null && durationMs > 0
+        ? Duration(milliseconds: durationMs)
+        : base.duration;
+    if (!MediaItemBuilder.isResolving(base) &&
+        base.title == title &&
+        base.artist == metadata['artist']?.toString() &&
+        base.album == metadata['album']?.toString() &&
+        base.duration == targetDuration &&
+        base.artUri == safeArtworkUri) {
+      return;
+    }
+    final extras = Map<String, dynamic>.from(base.extras ?? const {});
+    extras.remove(MediaItemBuilder.resolvingExtra);
+    final settled = base.copyWith(
+      title: title,
+      artist: metadata['artist']?.toString(),
+      album: metadata['album']?.toString(),
+      duration: targetDuration,
+      artUri: safeArtworkUri,
+      extras: extras,
+    );
+    if (queueIndex >= 0) {
+      currentQueue[queueIndex] = settled;
+    }
+    if (visibleSong?.id == songId || queueIndex < 0) {
+      _setCurrentSongAndRefreshFavorite(settled);
+      currentSongIndex.value = queueIndex;
+    }
+  }
+
+  /// Why a mirrored device did or did not take the target's song description.
+  /// Deduped: progress frames arrive every couple of seconds and the answer is
+  /// the same every time until something changes.
+  void _logRemoteMetadata(String? songId, String outcome) {
+    final line = 'remoteMetadata song=$songId $outcome';
+    if (line == _lastRemoteMetadataLine) return;
+    _lastRemoteMetadataLine = line;
+    printINFO(line, tag: LogTags.cloudPlayback);
+  }
+
+  String? _lastRemoteMetadataLine;
+
+  RemoteProgressAnchor _remoteAnchor = RemoteProgressAnchor.zero;
+  Ticker? _remoteProgressTicker;
+
+  Duration _optimisticSeekPosition = Duration.zero;
+  DateTime? _optimisticSeekIssuedAt;
+  static const _optimisticSeekConfirmWindow = Duration(seconds: 3);
+
+  /// Reflects a seek on the remote target immediately instead of waiting a full
+  /// round trip. Without this the extrapolation ticker, still anchored on the
+  /// old position, drags the bar back the moment the user releases the thumb.
+  void _applyOptimisticRemoteSeek(Duration position) {
+    _optimisticSeekPosition = position;
+    _optimisticSeekIssuedAt = DateTime.now();
+    _remoteAnchor = RemoteProgressAnchor(
+      position: position,
+      anchoredAt: DateTime.now(),
+      speed: _remoteAnchor.speed,
+    );
+    progressBarStatus.update((value) {
+      value.current = _clampProgressPosition(position, value.total);
+      value.buffered = value.current;
+    });
+    _notifyPlayerChanged();
+  }
+
+  void _startRemoteProgressTicker() {
+    if (_remoteProgressTicker != null) return;
+    final ticker = createTicker((_) {
+      if (!_cloudRemoteStateActive) return;
+      final now = DateTime.now();
+      // Samples have dried up — hold position instead of sweeping to the end.
+      // Deferred: a Ticker must not be disposed from inside its own callback.
+      if (_remoteAnchor.isStale(now)) {
+        scheduleMicrotask(_stopRemoteProgressTicker);
+        return;
+      }
+      final projected = _remoteAnchor.project(now);
+      progressBarStatus.update((value) {
+        value.current = _clampProgressPosition(projected, value.total);
+        value.buffered = value.current;
+      });
+    });
+    _remoteProgressTicker = ticker;
+    // TickerFuture only completes when the ticker is stopped, which is exactly
+    // what dispose does; there is nothing to await.
+    unawaited(ticker.start());
+  }
+
+  void _stopRemoteProgressTicker() {
+    _remoteProgressTicker?.dispose();
+    _remoteProgressTicker = null;
+  }
+
+  /// Whether the audio target is still resolving the song it was handed.
+  void setCurrentSongResolving(
+    bool resolving, {
+    MediaItem? pendingSong,
+    Duration pendingPosition = Duration.zero,
+  }) {
+    if (_currentSongResolving == resolving && pendingSong == null) return;
+    _currentSongResolving = resolving;
+    if (resolving) {
+      if (pendingSong != null) {
+        // The handed-off song will be seeked here before it plays, so this is
+        // where "the source started" must be measured from.
+        _expectedSourceStartPosition = pendingPosition;
+        if (currentSong.value?.id != pendingSong.id) {
+          _setCurrentSongAndRefreshFavorite(pendingSong);
+          currentSongIndex.value = currentQueue.indexWhere(
+            (item) => item.id == pendingSong.id,
+          );
+          _clearLyricsForSongChange();
+        }
+        progressBarStatus.update((value) {
+          final pendingTotal =
+              pendingSong.duration ??
+              (pendingPosition > Duration.zero
+                  ? pendingPosition
+                  : Duration.zero);
+          final heldPosition = _clampProgressPosition(
+            pendingPosition,
+            pendingTotal,
+          );
+          value.current = heldPosition;
+          value.buffered = heldPosition;
+          value.total = pendingTotal;
+        });
+      }
+      _setButtonState(PlayButtonState.loading);
+    } else {
+      final playbackState = _audioHandler.playbackState.value;
+      final processingState = playbackState.processingState;
+      if (processingState == AudioProcessingState.loading) {
+        _cancelBufferingGrace();
+        _setButtonState(PlayButtonState.loading);
+      } else if (processingState == AudioProcessingState.buffering) {
+        // The tail of a handoff routinely lands mid-rebuffer. Same rule as the
+        // playback-state listener: a blink of buffering is not worth a spinner.
+        _armBufferingGrace(playbackState.playing);
+      } else {
+        _cancelBufferingGrace();
+        _setButtonState(
+          playbackState.playing
+              ? PlayButtonState.playing
+              : PlayButtonState.paused,
+        );
+      }
+    }
+    _notifyPlayerChanged();
+  }
+
+  bool _currentSongResolving = false;
+  bool get isCurrentSongResolving => _currentSongResolving;
+
+  /// Makes an incoming cloud handoff visible before metadata or audio resolves.
+  ///
+  /// The network target bypasses the local song-tap methods that normally
+  /// initialize the collapsed panel. On wide screens that left audio playing
+  /// with a zero-height or stale-hidden mini-player.
+  Future<void> prepareIncomingCloudSong(
+    MediaItem pendingSong, {
+    Duration position = Duration.zero,
+  }) async {
+    setCurrentSongResolving(
+      true,
+      pendingSong: pendingSong,
+      pendingPosition: position,
+    );
+    if (!playerPanelOpen.value) {
+      playerPanelTopVisible.value = true;
+      playerPaneOpacity.value = 1;
+    }
+    await _playerPanelCheck(restoreSession: true);
+  }
+
+  /// Backfill progress for the queue, so the UI can say "42 of 900" instead of
+  /// silently filling in rows.
+  void setQueueResolutionProgress({required int resolved, required int total}) {
+    final next = total <= 0 || resolved >= total ? null : (resolved, total);
+    if (_queueResolution == next) return;
+    _queueResolution = next;
+    _notifyPlayerChanged();
+  }
+
+  (int resolved, int total)? _queueResolution;
+  (int resolved, int total)? get queueResolutionProgress => _queueResolution;
+
+  void setCloudSocketStatus(PlaybackSocketStatus status) {
+    if (_cloudSocketStatus == status) return;
+    _cloudSocketStatus = status;
+    _notifyPlayerChanged();
+  }
+
+  PlaybackSocketStatus _cloudSocketStatus = PlaybackSocketStatus.disconnected;
+  PlaybackSocketStatus get cloudSocketStatus => _cloudSocketStatus;
+
+  /// Set by [CloudPlaybackReceiver] so its session/command state lands in the
+  /// same debug dump as the player's. A plain callback avoids a dependency
+  /// cycle — the receiver already holds the controller.
+  Map<String, Object?> Function()? cloudReceiverDiagnostics;
+
+  /// True while this device mirrors another device's playback.
+  bool get isMirroringRemotePlayback => _cloudRemoteStateActive;
+
+  Future<void> clearRemoteMediaNotification() async {
+    if (!RuntimePlatform.isAndroid) return;
+    await _audioHandler.customAction('clearRemoteNotificationMirror');
+  }
+
+  Future<void> clearRemoteSessionState() async {
+    await clearRemoteMediaNotification();
+    if (!_cloudRemoteStateActive) return;
+    _cloudRemoteStateActive = false;
+    _pendingRemoteSongId = null;
+    _remoteTransitionRollback = null;
+    _currentSongResolving = false;
+    _stopRemoteProgressTicker();
+    _queueResolution = null;
+    // Resync from the local handler: while mirroring, the listeners below were
+    // gated off, so the observables still hold the remote device's state.
+    final localQueue = _audioHandler.queue.value;
+    currentQueue
+      ..clear()
+      ..addAll(localQueue);
+    currentQueue.refresh();
+    final localItem = _audioHandler.mediaItem.value;
+    if (isDisplayableSong(localItem)) {
+      _setCurrentSongAndRefreshFavorite(localItem!);
+    } else {
+      currentSong.value = null;
+      isCurrentSongFav.value = false;
+    }
+    currentSongIndex.value = localItem == null
+        ? -1
+        : localQueue.indexWhere((item) => item.id == localItem.id);
+    final state = _audioHandler.playbackState.value;
+    progressBarStatus.update((value) {
+      value.total = localItem?.duration ?? Duration.zero;
+      value.current = _clampProgressPosition(state.updatePosition, value.total);
+      value.buffered = _clampProgressPosition(
+        state.bufferedPosition,
+        value.total,
+      );
+    });
+    _setButtonState(
+      state.playing ? PlayButtonState.playing : PlayButtonState.paused,
+    );
+    _notifyPlayerChanged();
+  }
 
   final isCurrentSongFav = ObservableValue(false);
   final playingFrom = ObservableValue(
@@ -147,6 +761,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   final GlobalKey<ScaffoldState> homeScaffoldKey = GlobalKey<ScaffoldState>();
 
   final buttonState = ObservableValue(PlayButtonState.paused);
+  bool _cloudRemoteStateActive = false;
 
   // track whether wakelock is currently enabled to avoid repeated calls
   bool _wakelockActive = false;
@@ -166,7 +781,9 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   var _disposed = false;
   var _playerChangeNotificationScheduled = false;
   static const _sourceStartProgressWindow = Duration(seconds: 10);
+  Duration _pendingPlaybackStartPosition = Duration.zero;
   String? _pendingPlaybackStartSongId;
+  bool _pendingSourceTransitionObserved = false;
   final List<StreamSubscription<dynamic>> _observableSubscriptions = [];
 
   List<MediaItem> get displayQueue =>
@@ -398,33 +1015,44 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   void _listenForChangesInPlayerState() {
     _audioHandler.playbackState.listen((playerState) {
+      if (_cloudRemoteStateActive) return;
       final isPlaying = playerState.playing;
       final processingState = playerState.processingState;
       _reflectExternalRepeatShuffleChanges(playerState);
-      if (_isWaitingForCurrentSourceStart && _isReadySourceStart(playerState)) {
+      if (_isWaitingForCurrentSourceStart &&
+          processingState != AudioProcessingState.ready) {
+        _pendingSourceTransitionObserved = true;
+      }
+      if (_isWaitingForCurrentSourceStart &&
+          (_isReadySourceStart(playerState) ||
+              _isReadyPausedPendingSource(playerState))) {
         _clearPendingSourceStart();
       }
-      if (!isPlaying ||
-          processingState == AudioProcessingState.completed ||
+      if (processingState == AudioProcessingState.completed ||
           processingState == AudioProcessingState.error) {
         _clearPendingSourceStart();
       }
 
-      if (processingState == AudioProcessingState.loading) {
+      final immediateLoading =
+          _currentSongResolving ||
+          processingState == AudioProcessingState.loading ||
+          (_isWaitingForCurrentSourceStart &&
+              processingState != AudioProcessingState.completed &&
+              processingState != AudioProcessingState.error);
+      if (immediateLoading) {
+        _cancelBufferingGrace();
         _setButtonState(PlayButtonState.loading);
       } else if (processingState == AudioProcessingState.buffering) {
-        _setButtonState(PlayButtonState.loading);
-      } else if (_isWaitingForCurrentSourceStart &&
-          isPlaying &&
-          processingState != AudioProcessingState.completed &&
-          processingState != AudioProcessingState.error) {
-        _setButtonState(PlayButtonState.loading);
-      } else if (!isPlaying || processingState == AudioProcessingState.error) {
-        _setButtonState(PlayButtonState.paused);
-      } else if (processingState == AudioProcessingState.completed) {
-        _setButtonState(PlayButtonState.paused);
+        _armBufferingGrace(isPlaying);
       } else {
-        _setButtonState(PlayButtonState.playing);
+        _cancelBufferingGrace();
+        if (!isPlaying ||
+            processingState == AudioProcessingState.error ||
+            processingState == AudioProcessingState.completed) {
+          _setButtonState(PlayButtonState.paused);
+        } else {
+          _setButtonState(PlayButtonState.playing);
+        }
       }
 
       // Keep the screen awake whenever playback is active and the setting is enabled.
@@ -475,8 +1103,66 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   void _setButtonState(PlayButtonState state) {
     if (buttonState.value == state) return;
     buttonState.value = state;
+    _logSurface('button');
     _notifyPlayerChanged();
   }
+
+  /// A seek or a restart on a cached song makes the engine dip into buffering
+  /// for a few dozen milliseconds. Swapping the play icon for a spinner that
+  /// fast reads as a glitch, so only a rebuffer that outlasts this window is
+  /// worth telling the user about. Genuine loads bypass it.
+  static const _bufferingSpinnerGrace = Duration(milliseconds: 350);
+  Timer? _bufferingGraceTimer;
+
+  void _armBufferingGrace(bool isPlaying) {
+    if (buttonState.value == PlayButtonState.loading) return;
+    // Set the button first, then arm: _setButtonState must never cancel the
+    // grace timer, or arming would immediately kill its own timer.
+    _setButtonState(
+      isPlaying ? PlayButtonState.playing : PlayButtonState.paused,
+    );
+    if (_bufferingGraceTimer != null) return; // one shot per buffering episode
+    _bufferingGraceTimer = Timer(_bufferingSpinnerGrace, () {
+      _bufferingGraceTimer = null;
+      if (_disposed || _cloudRemoteStateActive) return;
+      if (_audioHandler.playbackState.value.processingState ==
+          AudioProcessingState.buffering) {
+        _setButtonState(PlayButtonState.loading);
+      }
+    });
+  }
+
+  void _cancelBufferingGrace() {
+    _bufferingGraceTimer?.cancel();
+    _bufferingGraceTimer = null;
+  }
+
+  /// Dumps every input that decides whether the title/artist render as text or
+  /// as shimmer. Diagnosing this from the outside kept failing because the two
+  /// causes look identical on screen: a song we never resolved, and a resolved
+  /// song whose play button is stuck on loading. Deduped, so it only prints
+  /// when something actually changes.
+  void _logSurface(String reason) {
+    final song = currentSong.value;
+    final line =
+        'surface[$reason] loading=$isCurrentSongLoading '
+        'button=${buttonState.value.name} '
+        'song=${song?.id} title="${song?.title}" artist="${song?.artist}" '
+        'resolvingItem=${song == null ? null : MediaItemBuilder.isResolving(song)} '
+        'resolvingFlag=$_currentSongResolving '
+        'pendingStart=$_pendingPlaybackStartSongId '
+        'waitingStart=$_isWaitingForCurrentSourceStart '
+        'transitionSeen=$_pendingSourceTransitionObserved '
+        'startFrom=${_pendingPlaybackStartPosition.inMilliseconds} '
+        'mirroring=$_cloudRemoteStateActive '
+        'pendingRemote=$_pendingRemoteSongId '
+        'queue=${currentQueue.length} index=${currentSongIndex.value}';
+    if (line == _lastSurfaceLine) return;
+    _lastSurfaceLine = line;
+    printINFO(line, tag: LogTags.cloudPlayback);
+  }
+
+  String? _lastSurfaceLine;
 
   void _setWakelock(bool enable) {
     if (_wakelockActive == enable) return; // no-op if already in desired state
@@ -509,6 +1195,11 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   void _listenForChangesInPosition() {
     AudioService.position.listen((position) {
+      if (_cloudRemoteStateActive) return;
+      // Android can keep emitting the previous just_audio source's position
+      // while an incoming cloud song is still resolving. The placeholder has
+      // already reset the bar; do not let those stale ticks move it again.
+      if (_currentSongResolving) return;
       if (_isWaitingForCurrentSourceStart) {
         final playbackState = _audioHandler.playbackState.value;
         if (!_isReadySourceStart(playbackState) ||
@@ -539,6 +1230,8 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   void _listenForChangesInBufferedPosition() {
     _audioHandler.playbackState.listen((playbackState) async {
+      if (_cloudRemoteStateActive) return;
+      if (_currentSongResolving) return;
       final oldState = progressBarStatus.value;
       final startedPendingSource =
           _isWaitingForCurrentSourceStart && _isReadySourceStart(playbackState);
@@ -581,6 +1274,9 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   void _listenForChangesInDuration() {
     _audioHandler.mediaItem.listen((mediaItem) async {
+      // While mirroring a remote target this device's own handler is idle; any
+      // event from it would overwrite the mirrored song and zero the bar.
+      if (_cloudRemoteStateActive) return;
       if (mediaItem == null || !isDisplayableSong(mediaItem)) {
         currentSong.value = null;
         _clearPendingSourceStart();
@@ -598,7 +1294,11 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       printINFO(mediaItem.title, tag: LogTags.player);
       _newSongFlag = true;
       isCurrentSongBuffered.value = false;
-      currentSong.value = mediaItem;
+      // The audio target installs a placeholder for the handed-off song before
+      // resolving it, so the handler's real item arrives under an id we already
+      // hold. Assigning it must not be swallowed as "no change".
+      currentSong.overwrite(mediaItem);
+      _logSurface('handler');
       currentSongIndex.value = currentQueue.indexWhere(
         (element) => element.id == currentSong.value!.id,
       );
@@ -652,24 +1352,67 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       _pendingPlaybackStartSongId != null &&
       _pendingPlaybackStartSongId == currentSong.value?.id;
 
+  /// Whether the player has landed where this source was asked to start.
+  ///
+  /// Measured against the *expected* start, not against zero. A cloud handoff
+  /// resumes mid-track — hand a song over 59s in and the target correctly seeks
+  /// to 0:59, which a "must be near zero" test reads as "the source never
+  /// started". The pending start then never cleared, pinning the play button on
+  /// loading, and with it the title and artist shimmer — on a song that was
+  /// fully resolved and audibly playing. Skipping to another track cleared it
+  /// only because that one does start at zero.
   bool _isSourceStartPosition(Duration position) {
-    return position <= _sourceStartProgressWindow;
+    return (position - _pendingPlaybackStartPosition).abs() <=
+        _sourceStartProgressWindow;
   }
 
   bool _isReadySourceStart(PlaybackState playbackState) {
-    return playbackState.processingState == AudioProcessingState.ready &&
+    return _pendingSourceTransitionObserved &&
+        playbackState.processingState == AudioProcessingState.ready &&
         playbackState.playing &&
         _isSourceStartPosition(playbackState.updatePosition);
   }
 
+  /// Session restoration prepares a source and seeks to its saved position
+  /// without automatically resuming. That is a completed transition, not a
+  /// loading state, even though it is paused and no longer near zero.
+  bool _isReadyPausedPendingSource(PlaybackState playbackState) {
+    return _pendingSourceTransitionObserved &&
+        playbackState.processingState == AudioProcessingState.ready &&
+        !playbackState.playing;
+  }
+
   void _beginPendingSourceStart(String songId) {
     _pendingPlaybackStartSongId = songId;
+    _pendingSourceTransitionObserved = false;
+    // Zero unless something told us this source resumes elsewhere.
+    _pendingPlaybackStartPosition =
+        _expectedSourceStartPosition ?? Duration.zero;
     _setButtonState(PlayButtonState.loading);
+  }
+
+  /// Moves the goalposts when the user seeks before the source ever reported
+  /// its first ready frame. The start is now measured from where the thumb was
+  /// dropped, not from zero — otherwise [_isSourceStartPosition] can never be
+  /// satisfied, the pending start never clears, and the play button stays
+  /// pinned on loading with the progress bar frozen for the rest of the track.
+  void _retargetPendingSourceStart(Duration position) {
+    if (!_isWaitingForCurrentSourceStart) return;
+    _pendingPlaybackStartPosition = position;
+    _expectedSourceStartPosition = position;
   }
 
   void _clearPendingSourceStart() {
     _pendingPlaybackStartSongId = null;
+    _pendingSourceTransitionObserved = false;
+    _pendingPlaybackStartPosition = Duration.zero;
+    _expectedSourceStartPosition = null;
   }
+
+  /// Where the next source is expected to begin, when that is known before the
+  /// audio handler reports the song. Only a resumed source sets this; a normal
+  /// tap starts at zero and leaves it null.
+  Duration? _expectedSourceStartPosition;
 
   Future<void> _updateCurrentSongSideEffects(MediaItem mediaItem) async {
     await _checkFavFor(mediaItem);
@@ -699,6 +1442,9 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   void _listenForPlaylistChange() {
     _audioHandler.queue.listen((queue) {
+      // Same reason as _listenForChangesInDuration: a local queue event would
+      // replace the mirrored remote queue with this device's idle one.
+      if (_cloudRemoteStateActive) return;
       currentQueue.value = queue;
       currentQueue.refresh();
       final song = currentSong.value;
@@ -736,6 +1482,24 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
         await _playViaAndroidAuto(event['songId'], event['libraryId']);
       } else if (event['eventType'] == 'playError') {
         notifyPlayError(event['message'] as String? ?? 'networkError');
+      } else if (event['eventType'] == 'remoteNotificationCommand' &&
+          _cloudRemoteStateActive) {
+        switch (event['action']) {
+          case 'play':
+            await play();
+          case 'pause':
+            await pause();
+          case 'next':
+            await next();
+          case 'previous':
+            await prev();
+          case 'seek':
+            await seek(
+              Duration(
+                milliseconds: (event['positionMs'] as num?)?.toInt() ?? 0,
+              ),
+            );
+        }
       }
     });
   }
@@ -773,9 +1537,8 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
         playlistId: playlistId,
       );
       radioContinuationParam = content['additionalParamsForNext'];
-      await _playbackCommands.updateQueue(
-        List<MediaItem>.from(content['tracks']),
-      );
+      final tracks = List<MediaItem>.from(content['tracks']);
+      await _playbackCommands.updateQueue(tracks);
       if (isShuffleModeEnabled.value) {
         await _playbackCommands.shuffleFromIndex(0);
       }
@@ -787,6 +1550,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
           "index": 0,
         });
       }
+      return tracks;
     });
 
     if (playlistId != null) {
@@ -811,9 +1575,29 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       return;
     }
 
-    //currentSong.value = mediaItem;
-    unawaited(_playerPanelCheck());
-    await _playbackCommands.setSourceAndPlay(mediaItem!);
+    var transitionQueue = <MediaItem>[mediaItem!];
+    var transitionIndex = 0;
+    if (_playbackCommands.isRemoteControlActive) {
+      final remoteQueue = await queueUpdate;
+      final remoteIndex = remoteQueue.indexWhere(
+        (item) => item.id == mediaItem.id,
+      );
+      if (remoteIndex >= 0) {
+        transitionQueue = remoteQueue;
+        transitionIndex = remoteIndex;
+      }
+    }
+    final remoteTransition = beginRemoteSongTransition(
+      transitionQueue,
+      transitionIndex,
+    );
+    try {
+      unawaited(_playerPanelCheck());
+      await _playbackCommands.setSourceAndPlay(mediaItem);
+    } catch (_) {
+      failRemoteSongTransition(remoteTransition);
+      rethrow;
+    }
 
     // disable queue loop mode when radio is started
     if (radio && isQueueLoopModeEnabled.value && !isShuffleModeEnabled.value) {
@@ -856,14 +1640,20 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       }),
     );
 
-    await _playerPanelCheck();
-    await _playbackCommands.updateQueue(mediaItems);
-    if (isShuffleModeEnabled.value) {
-      await _playbackCommands.shuffleFromIndex(index);
-      await _playbackCommands.playByIndex(0);
-      return;
+    final remoteTransition = beginRemoteSongTransition(mediaItems, index);
+    try {
+      await _playerPanelCheck();
+      await _playbackCommands.updateQueue(mediaItems);
+      if (isShuffleModeEnabled.value) {
+        await _playbackCommands.shuffleFromIndex(index);
+        await _playbackCommands.playByIndex(0);
+        return;
+      }
+      await _playbackCommands.playByIndex(index);
+    } catch (_) {
+      failRemoteSongTransition(remoteTransition);
+      rethrow;
     }
-    await _playbackCommands.playByIndex(index);
   }
 
   Future<void> startRadio(MediaItem? mediaItem, {String? playlistId}) async {
@@ -1116,6 +1906,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   Future<void> pause() async {
     if (_routeToHost(SessionCommand.pause())) return;
+    _clearPendingSourceStart();
     await _playbackCommands.pause();
   }
 
@@ -1144,7 +1935,59 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   Future<void> prev() async {
     if (_routeToHost(SessionCommand.prev())) return;
-    await _playbackCommands.previous();
+    int? remoteTransition;
+    PreviousTrackIntent? remoteIntent;
+    String? desiredVideoId;
+    if (_cloudRemoteStateActive) {
+      final optimisticSeekAt = _optimisticSeekIssuedAt;
+      final decisionPosition =
+          optimisticSeekAt != null &&
+              DateTime.now().difference(optimisticSeekAt) <
+                  _optimisticSeekConfirmWindow
+          ? _optimisticSeekPosition
+          : progressBarStatus.value.current;
+      remoteIntent = previousTrackIntentFor(decisionPosition);
+      final currentIndex = currentSongIndex.value;
+      final shouldSelectPrevious =
+          remoteIntent == PreviousTrackIntent.selectPrevious &&
+          currentQueue.length > 1 &&
+          currentIndex >= 0 &&
+          currentIndex < currentQueue.length;
+      if (shouldSelectPrevious) {
+        final previousIndex = currentIndex > 0
+            ? currentIndex - 1
+            : isQueueLoopModeEnabled.value
+            ? currentQueue.length - 1
+            : currentIndex;
+        if (previousIndex != currentIndex) {
+          desiredVideoId = currentQueue[previousIndex].id;
+          remoteTransition = beginRemoteSongTransition(
+            currentQueue,
+            previousIndex,
+          );
+        } else {
+          _applyOptimisticRemoteSeek(Duration.zero);
+          _retargetPendingSourceStart(Duration.zero);
+        }
+      } else {
+        _applyOptimisticRemoteSeek(Duration.zero);
+        _retargetPendingSourceStart(Duration.zero);
+      }
+    } else if (shouldRestartCurrentTrack(progressBarStatus.value.current)) {
+      // Locally the handler restarts the current track by seeking to zero, so
+      // a source still waiting on a resumed (non-zero) start must be retargeted
+      // for the same reason as in [seek].
+      _retargetPendingSourceStart(Duration.zero);
+    }
+    try {
+      await _playbackCommands.previous(
+        remoteIntent: remoteIntent,
+        desiredVideoId: desiredVideoId,
+      );
+    } catch (_) {
+      failRemoteSongTransition(remoteTransition);
+      rethrow;
+    }
   }
 
   void requestPrev() {
@@ -1162,6 +2005,8 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   Future<void> seek(Duration position) async {
     if (_routeToHost(SessionCommand.seek(position))) return;
+    if (_cloudRemoteStateActive) _applyOptimisticRemoteSeek(position);
+    _retargetPendingSourceStart(position);
     await _playbackCommands.seek(position);
   }
 
@@ -1250,9 +2095,12 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   }
 
   Future<void> setVolume(int value) async {
-    await _playbackCommands.setVolume(value);
-    volume.value = value;
-    await _settingsRepository.setVolume(value);
+    final normalizedValue = value.clamp(0, 100);
+    // Keep the slider and percentage responsive while the platform call and
+    // persisted preference complete in the background.
+    volume.value = normalizedValue;
+    await _playbackCommands.setVolume(normalizedValue);
+    await _settingsRepository.setVolume(normalizedValue);
   }
 
   Future<void> mute() async {
@@ -1530,6 +2378,25 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
     final progress = progressBarStatus.value;
     final current = currentSong.value;
     return {
+      // Which role this device believes it has. The first handoff failure could
+      // not be diagnosed from a dump because nothing recorded this, and the
+      // roles had to be inferred from whether the controller disagreed with its
+      // own audio handler.
+      'cloudPlayback': {
+        'isMirroringRemotePlayback': _cloudRemoteStateActive,
+        'cloudSocketStatus': _cloudSocketStatus.name,
+        'currentSongResolving': _currentSongResolving,
+        'queueResolution': _queueResolution == null
+            ? null
+            : {'resolved': _queueResolution!.$1, 'total': _queueResolution!.$2},
+        'remoteAnchorPositionMs': _remoteAnchor.position.inMilliseconds,
+        'remoteAnchorAgeMs': DateTime.now()
+            .difference(_remoteAnchor.anchoredAt)
+            .inMilliseconds,
+        'remoteAnchorStale': _remoteAnchor.isStale(DateTime.now()),
+        'remoteProgressTicking': _remoteProgressTicker != null,
+        ...?cloudReceiverDiagnostics?.call(),
+      },
       'playerController': {
         'buttonState': buttonState.value.name,
         'currentSongIndex': currentSongIndex.value,
@@ -1549,6 +2416,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
         'progressBufferedMs': progress.buffered.inMilliseconds,
         'progressTotalMs': progress.total.inMilliseconds,
         'pendingPlaybackStartSongId': _pendingPlaybackStartSongId,
+        'pendingSourceTransitionObserved': _pendingSourceTransitionObserved,
         'isWaitingForCurrentSourceStart': _isWaitingForCurrentSourceStart,
         'sourceStartProgressWindowMs':
             _sourceStartProgressWindow.inMilliseconds,
@@ -1650,10 +2518,12 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
     }
     _observableSubscriptions.clear();
     unawaited(keyboardSubscription?.cancel());
+    _stopRemoteProgressTicker();
     scrollController.dispose();
     lyricController.dispose();
     gesturePlayerStateAnimationController?.dispose();
     sleepTimer?.cancel();
+    _cancelBufferingGrace();
     if (RuntimePlatform.isWindows) {
       _windowsAudioService?.dispose();
       _windowsAudioService = null;
@@ -1670,3 +2540,25 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 }
 
 enum PlayButtonState { paused, playing, loading }
+
+class _RemoteSongTransitionSnapshot {
+  const _RemoteSongTransitionSnapshot({
+    required this.queue,
+    required this.index,
+    required this.song,
+    required this.progress,
+    required this.buttonState,
+    required this.isFavorite,
+    required this.remoteAnchor,
+    required this.wasProgressTicking,
+  });
+
+  final List<MediaItem> queue;
+  final int index;
+  final MediaItem? song;
+  final ProgressBarState progress;
+  final PlayButtonState buttonState;
+  final bool isFavorite;
+  final RemoteProgressAnchor remoteAnchor;
+  final bool wasProgressTicking;
+}

@@ -5,7 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:widget_marquee/widget_marquee.dart';
 
+import '../../../l10n/l10n.dart';
+
 import '../../../app/providers/controller_providers.dart';
+import '../../../services/cloud/playback_socket_client.dart';
+import '../../widgets/shimmer_widgets/basic_container.dart';
 import '/ui/widgets/lyrics_dialog.dart';
 import '/ui/widgets/song_info_dialog.dart';
 import '../../widgets/add_to_playlist_btn.dart';
@@ -15,6 +19,7 @@ import '../../widgets/sleep_timer_bottom_sheet.dart';
 import '../../widgets/song_download_btn.dart';
 import '../../widgets/image_widget.dart';
 import '../../widgets/mini_player_progress_bar.dart';
+import '../../widgets/cloud_devices_sheet.dart';
 import 'animated_play_button.dart';
 
 class MiniPlayer extends ConsumerWidget {
@@ -32,6 +37,7 @@ class MiniPlayer extends ConsumerWidget {
     return AnimatedBuilder(
       animation: Listenable.merge([
         playerController.currentSong,
+        playerController.buttonState,
         playerController.playerPanelTopVisible,
         playerController.playerPaneOpacity,
         settingsController.isBottomNavBarEnabled,
@@ -73,7 +79,6 @@ class MiniPlayer extends ConsumerWidget {
                         : Padding(
                             padding: const EdgeInsets.only(
                               left: 15.0,
-                              top: 8,
                               right: 15,
                               bottom: 0,
                             ),
@@ -157,42 +162,76 @@ class MiniPlayer extends ConsumerWidget {
                                   children: [
                                     SizedBox(
                                       height: 20,
-                                      child: Text(
-                                        playerController.currentSong.value !=
-                                                null
-                                            ? playerController
-                                                  .currentSong
-                                                  .value!
-                                                  .title
-                                            : "",
-                                        maxLines: 1,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.titleMedium,
-                                      ),
+                                      // The id is all the session sends and the
+                                      // metadata has not resolved yet, so there
+                                      // is no title to render. Buffering audio
+                                      // is not a reason to shimmer.
+                                      child:
+                                          playerController.isCurrentSongLoading
+                                          ? const Align(
+                                              alignment: Alignment.centerLeft,
+                                              child: BasicShimmerContainer(
+                                                Size(140, 13),
+                                              ),
+                                            )
+                                          : Text(
+                                              playerController
+                                                          .currentSong
+                                                          .value !=
+                                                      null
+                                                  ? playerController
+                                                        .currentSong
+                                                        .value!
+                                                        .title
+                                                  : "",
+                                              maxLines: 1,
+                                              style: Theme.of(
+                                                context,
+                                              ).textTheme.titleMedium,
+                                            ),
                                     ),
                                     SizedBox(
                                       height: 20,
-                                      child: Marquee(
-                                        id: "${playerController.currentSong.value}_mini",
-                                        delay: const Duration(
-                                          milliseconds: 300,
-                                        ),
-                                        duration: const Duration(seconds: 5),
-                                        child: Text(
-                                          playerController.currentSong.value !=
-                                                  null
-                                              ? playerController
-                                                    .currentSong
-                                                    .value!
-                                                    .artist!
-                                              : "",
-                                          maxLines: 1,
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.titleSmall,
-                                        ),
-                                      ),
+                                      child:
+                                          playerController.isCurrentSongLoading
+                                          ? const Align(
+                                              alignment: Alignment.centerLeft,
+                                              child: BasicShimmerContainer(
+                                                Size(95, 11),
+                                              ),
+                                            )
+                                          : Marquee(
+                                              id: "${playerController.currentSong.value}_mini",
+                                              delay: const Duration(
+                                                milliseconds: 300,
+                                              ),
+                                              duration: const Duration(
+                                                seconds: 5,
+                                              ),
+                                              child: Text(
+                                                // With no polling fallback, a
+                                                // dropped socket means no
+                                                // remote control at all.
+                                                playerController
+                                                            .isMirroringRemotePlayback &&
+                                                        playerController
+                                                                .cloudSocketStatus !=
+                                                            PlaybackSocketStatus
+                                                                .connected
+                                                    ? context
+                                                          .l10n
+                                                          .cloudPlaybackReconnecting
+                                                    : playerController
+                                                              .currentSong
+                                                              .value
+                                                              ?.artist ??
+                                                          "",
+                                                maxLines: 1,
+                                                style: Theme.of(
+                                                  context,
+                                                ).textTheme.titleSmall,
+                                              ),
+                                            ),
                                     ),
                                   ],
                                 ),
@@ -201,7 +240,12 @@ class MiniPlayer extends ConsumerWidget {
                           ),
                           //player control
                           SizedBox(
-                            width: isWideScreen && !bottomNavEnabled ? 450 : 90,
+                            width: isWideScreen && !bottomNavEnabled
+                                ? 450
+                                // The compact controls contain a 48 px
+                                // IconButton, a 50 px play button and a 40 px
+                                // next button. 130 px overflows on phones.
+                                : 144,
                             child: AnimatedBuilder(
                               animation: Listenable.merge([
                                 playerController.currentSong,
@@ -215,6 +259,14 @@ class MiniPlayer extends ConsumerWidget {
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceEvenly,
                                 children: [
+                                  IconButton(
+                                    tooltip: context.l10n.playOnDevice,
+                                    icon: const Icon(
+                                      Icons.devices_other_outlined,
+                                    ),
+                                    onPressed: () =>
+                                        showCloudDevicesSheet(context),
+                                  ),
                                   if (isWideScreen && !bottomNavEnabled)
                                     Row(
                                       children: [
@@ -253,28 +305,17 @@ class MiniPlayer extends ConsumerWidget {
                                     SizedBox(
                                       width: 40,
                                       child: InkWell(
+                                        // Previous is valid even at index zero:
+                                        // the audio handler restarts the current
+                                        // song. During a cloud handoff the
+                                        // visible queue can also temporarily
+                                        // contain only the current item while
+                                        // the target still owns the full queue.
                                         onTap:
-                                            (playerController
-                                                    .currentQueue
-                                                    .isEmpty ||
-                                                // On the first song, prev is
-                                                // still valid when shuffle or
-                                                // queue-loop is on (it wraps
-                                                // to the end of the queue).
-                                                (!(playerController
-                                                            .isShuffleModeEnabled
-                                                            .value ||
-                                                        playerController
-                                                            .isQueueLoopModeEnabled
-                                                            .value) &&
-                                                    playerController
-                                                            .currentQueue
-                                                            .first
-                                                            .id ==
-                                                        playerController
-                                                            .currentSong
-                                                            .value
-                                                            ?.id))
+                                            playerController
+                                                    .currentSong
+                                                    .value ==
+                                                null
                                             ? null
                                             : playerController.requestPrev,
                                         child: Icon(
@@ -287,21 +328,10 @@ class MiniPlayer extends ConsumerWidget {
                                       ),
                                     ),
                                   isWideScreen && !bottomNavEnabled
-                                      ? Container(
-                                          decoration: BoxDecoration(
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.secondary,
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                          ),
-                                          width: 58,
-                                          height: 58,
-                                          child: Center(
-                                            child: AnimatedPlayButton(
-                                              iconSize: isWideScreen ? 43 : 35,
-                                            ),
+                                      ? const CircleAvatar(
+                                          radius: 35,
+                                          child: AnimatedPlayButton(
+                                            key: Key('playButton'),
                                           ),
                                         )
                                       : SizedBox.square(
@@ -435,8 +465,9 @@ class MiniPlayer extends ConsumerWidget {
                                       ),
                                       height: 20,
                                       width: (size.width > 860) ? 220 : 180,
-                                      child: Builder(
-                                        builder: (context) {
+                                      child: AnimatedBuilder(
+                                        animation: playerController.volume,
+                                        builder: (context, _) {
                                           final volume =
                                               playerController.volume.value;
                                           return Row(
@@ -476,14 +507,26 @@ class MiniPlayer extends ConsumerWidget {
                                                             .volume
                                                             .value /
                                                         100,
-                                                    onChanged: (value) async {
-                                                      await playerController
-                                                          .setVolume(
-                                                            (value * 100)
-                                                                .toInt(),
-                                                          );
+                                                    onChanged: (value) {
+                                                      unawaited(
+                                                        playerController
+                                                            .setVolume(
+                                                              (value * 100)
+                                                                  .round(),
+                                                            ),
+                                                      );
                                                     },
                                                   ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                width: 38,
+                                                child: Text(
+                                                  '$volume%',
+                                                  textAlign: TextAlign.end,
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.labelSmall,
                                                 ),
                                               ),
                                             ],

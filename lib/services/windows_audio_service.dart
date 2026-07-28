@@ -10,21 +10,23 @@ class WindowsAudioService {
     _initService();
   }
 
-  late SMTCWindows smtc;
+  SMTCWindows? smtc;
   final PlayerController playerController;
 
   _initService() {
-    smtc = SMTCWindows(enabled: false);
+    late final SMTCWindows session;
     try {
-      smtc.buttonPressStream.listen((event) async {
+      session = SMTCWindows(enabled: false);
+      smtc = session;
+      session.buttonPressStream.listen((event) async {
         switch (event) {
           case PressedButton.play:
             playerController.requestPlay();
-            await smtc.setPlaybackStatus(PlaybackStatus.playing);
+            await session.setPlaybackStatus(PlaybackStatus.playing);
             break;
           case PressedButton.pause:
             playerController.requestPause();
-            await smtc.setPlaybackStatus(PlaybackStatus.paused);
+            await session.setPlaybackStatus(PlaybackStatus.paused);
             break;
           case PressedButton.next:
             playerController.requestNext();
@@ -39,30 +41,31 @@ class WindowsAudioService {
       });
     } catch (e) {
       printERROR("Error: $e");
+      return;
     }
 
     playerController.buttonState.listen((state) async {
       switch (state) {
         case PlayButtonState.playing:
-          await smtc.setPlaybackStatus(PlaybackStatus.playing);
+          await session.setPlaybackStatus(PlaybackStatus.playing);
           break;
         case PlayButtonState.paused:
-          await smtc.setPlaybackStatus(PlaybackStatus.paused);
+          await session.setPlaybackStatus(PlaybackStatus.paused);
           break;
         case PlayButtonState.loading:
-          await smtc.setPlaybackStatus(PlaybackStatus.paused);
+          await session.setPlaybackStatus(PlaybackStatus.paused);
           break;
       }
     });
 
     playerController.progressBarStatus.listen((status) async {
-      await smtc.setPosition(status.current);
+      await session.setPosition(status.current);
     });
 
     playerController.currentSong.listen((song) async {
       if (song != null) {
-        if (!smtc.enabled) await smtc.enableSmtc();
-        await smtc.updateMetadata(
+        if (!session.enabled) await session.enableSmtc();
+        await session.updateMetadata(
           MusicMetadata(
             title: song.title,
             album: song.album,
@@ -71,7 +74,9 @@ class WindowsAudioService {
             thumbnail: song.artUri.toString(),
           ),
         );
-        await smtc.setEndTime(playerController.progressBarStatus.value.total);
+        await session.setEndTime(
+          playerController.progressBarStatus.value.total,
+        );
       }
     });
   }
@@ -81,10 +86,12 @@ class WindowsAudioService {
   }
 
   Future<void> _disposeSmtc() async {
+    final session = smtc;
+    if (session == null) return;
     try {
-      await smtc.clearMetadata();
-      await smtc.disableSmtc();
-      await smtc.dispose();
+      await session.clearMetadata();
+      await session.disableSmtc();
+      await session.dispose();
     } catch (e) {
       printERROR("Error while disposing SMTC: $e");
     }

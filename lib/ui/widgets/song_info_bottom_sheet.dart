@@ -34,6 +34,19 @@ import 'song_download_btn.dart';
 import 'image_widget.dart';
 import 'song_info_dialog.dart';
 
+List<Map<dynamic, dynamic>> _navigableArtists(MediaItem song) {
+  final artists = song.extras?['artists'];
+  if (artists is! List) return const [];
+  final navigable = <Map<dynamic, dynamic>>[];
+  for (final entry in artists) {
+    if (entry is! Map) continue;
+    final id = entry['id'];
+    if (id is! String || id.trim().isEmpty) continue;
+    navigable.add(entry);
+  }
+  return navigable;
+}
+
 class SongInfoBottomSheet extends ConsumerStatefulWidget {
   const SongInfoBottomSheet(
     this.song, {
@@ -479,13 +492,7 @@ class _SongInfoBottomSheetState extends ConsumerState<SongInfoBottomSheet> {
     BuildContext context,
     PlayerController playerController,
   ) {
-    final artistList = [];
-    final artists = song.extras!['artists'];
-    if (artists != null) {
-      for (dynamic each in artists) {
-        if (each.containsKey("id") && each['id'] != null) artistList.add(each);
-      }
-    }
+    final artistList = _navigableArtists(song);
     return artistList.isNotEmpty
         ? artistList
               .map(
@@ -554,12 +561,7 @@ class SongInfoController extends ChangeNotifier
   Future<void> _setInitStatus(MediaItem song) async {
     isDownloaded = await _downloadRepository.containsDownload(song.id);
     isCurrentSongFav = await _libraryRepository.isFavorite(song.id);
-    final artists = song.extras!['artists'];
-    if (artists != null) {
-      for (dynamic each in artists) {
-        if (each.containsKey("id") && each['id'] != null) artistList.add(each);
-      }
-    }
+    artistList.addAll(_navigableArtists(song));
     notifyListeners();
   }
 

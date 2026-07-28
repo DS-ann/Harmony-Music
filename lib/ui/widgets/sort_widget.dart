@@ -56,7 +56,12 @@ class SortWidget extends StatefulWidget {
     this.initialIsAscending = true,
     required this.onSort,
     this.onMounted,
+    this.filterOptions,
   });
+
+  /// Optional filter switches shown behind a funnel icon. Only the Songs tab
+  /// uses them; every other screen passes null and is unchanged.
+  final List<SortFilterOption>? filterOptions;
 
   /// unique identifier for each sort-widget
   final String tag;
@@ -225,6 +230,8 @@ class _SortWidgetState extends State<SortWidget> {
                         ],
                       ),
                     ),
+                    if (widget.filterOptions?.isNotEmpty ?? false)
+                      _filterMenu(context, widget.filterOptions!),
                     _customIconButton(
                       context,
                       isSelected: controller.sortType == SortType.name,
@@ -407,6 +414,31 @@ class _SortWidgetState extends State<SortWidget> {
     );
   }
 
+  /// Filter switches behind a funnel, matching the sort buttons' size and
+  /// colour so the toolbar stays one row of controls. Highlighted whenever a
+  /// filter is on, so a narrowed list is never a mystery.
+  Widget _filterMenu(BuildContext context, List<SortFilterOption> options) {
+    final anyActive = options.any((option) => option.value);
+    return PopupMenuButton<void>(
+      icon: Icon(
+        anyActive ? Icons.filter_alt : Icons.filter_alt_outlined,
+        size: 20,
+        color: anyActive
+            ? Theme.of(context).colorScheme.secondary
+            : Theme.of(context).textTheme.bodySmall!.color,
+      ),
+      padding: EdgeInsets.zero,
+      splashRadius: 20,
+      tooltip: context.l10n.filter,
+      color: Theme.of(context).cardColor,
+      itemBuilder: (context) => [
+        for (final option in options)
+          // Keeps the menu open so several filters can be flipped at once.
+          PopupMenuItem<void>(child: _FilterSwitchTile(option: option)),
+      ],
+    );
+  }
+
   Widget _customIconButton(
     BuildContext context, {
     required IconData icon,
@@ -425,6 +457,55 @@ class _SortWidgetState extends State<SortWidget> {
       visualDensity: const VisualDensity(horizontal: -3, vertical: -3),
       onPressed: onPressed,
       tooltip: tooltip,
+    );
+  }
+}
+
+/// One switch in the [SortWidget] filter menu.
+class SortFilterOption {
+  const SortFilterOption({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final void Function(bool value) onChanged;
+}
+
+/// One switch in the filter menu, holding its own position.
+///
+/// The menu is a separate route: its items are built once when it opens and
+/// keep the [SortFilterOption] instances captured at that moment, so a parent
+/// rebuild after `onChanged` never reaches them and re-reading `option.value`
+/// always returns the pre-tap answer. The switch stayed visually stuck until
+/// the menu was closed and reopened, even though the list behind it had
+/// already re-filtered. Tracking the position locally is what makes the toggle
+/// respond on the tap that caused it.
+class _FilterSwitchTile extends StatefulWidget {
+  const _FilterSwitchTile({required this.option});
+
+  final SortFilterOption option;
+
+  @override
+  State<_FilterSwitchTile> createState() => _FilterSwitchTileState();
+}
+
+class _FilterSwitchTileState extends State<_FilterSwitchTile> {
+  late bool _value = widget.option.value;
+
+  @override
+  Widget build(BuildContext context) {
+    return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      value: _value,
+      title: Text(widget.option.label),
+      onChanged: (value) {
+        setState(() => _value = value);
+        widget.option.onChanged(value);
+      },
     );
   }
 }

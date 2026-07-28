@@ -155,5 +155,7 @@ void main() {
 }
 
 Widget _host(Widget child) {
-  return MaterialApp(home: Scaffold(body: Center(child: child)));
+  return MaterialApp(
+    home: Scaffold(body: Center(child: child)),
+  );
 }

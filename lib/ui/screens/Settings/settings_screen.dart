@@ -11,8 +11,8 @@ import 'package:harmonymusic/utils/lang_mapping.dart';
 
 import '../../../app/providers/controller_providers.dart';
 import '../../../app/providers/auth_providers.dart';
+import '../../../app/providers/repository_providers.dart';
 import '../../../app/providers/service_providers.dart';
-import '../../../services/cloud/cloud_audio_backup_service.dart';
 import '../../../utils/runtime_platform.dart';
 import '../../widgets/awaitable_button.dart';
 import '../../widgets/common_dialog_widget.dart';
@@ -58,6 +58,8 @@ class SettingsScreen extends ConsumerWidget {
     // disabling the update popup) sends the user here to see the update
     // controls; opens the App Info section.
     final revealUpdateSection = settingsController.consumeUpdateSectionReveal();
+    final revealAccountSection = settingsController
+        .consumeAccountSectionReveal();
     final topPadding =
         MediaQuery.orientationOf(context) == Orientation.landscape
         ? 50.0
@@ -91,13 +93,21 @@ class SettingsScreen extends ConsumerWidget {
                   CustomExpansionTile(
                     title: context.l10n.accountSection,
                     icon: Icons.account_circle,
+                    initiallyExpanded: revealAccountSection,
                     childrenBuilder: (context) => [
                       ListTile(
                         contentPadding: const EdgeInsets.only(
                           left: 5,
                           right: 10,
                         ),
-                        leading: authController.userProfile?.pictureUrl == null
+                        leading: authController.needsReauthentication
+                            // Badge stays until the user signs back in, so
+                            // dismissing the banner does not hide the state.
+                            ? Icon(
+                                Icons.error_outline,
+                                color: Theme.of(context).colorScheme.error,
+                              )
+                            : authController.userProfile?.pictureUrl == null
                             ? const Icon(Icons.person_outline)
                             : CircleAvatar(
                                 backgroundImage: NetworkImage(
@@ -114,11 +124,21 @@ class SettingsScreen extends ConsumerWidget {
                         subtitle: Text(
                           authController.isAuthenticated
                               ? "${context.l10n.loggedInAs} ${authController.userProfile?.email ?? authController.userProfile!.sub}"
+                              // An expired session used to look identical to
+                              // never having signed in, while sync quietly
+                              // stopped reaching the account.
+                              : authController.needsReauthentication
+                              ? context.l10n.sessionExpiredMessage
                               : !authController.isSupportedPlatform
                               ? context.l10n.authUnsupportedPlatform
                               : authController.isConfigured
                               ? context.l10n.optionalAccountDes
                               : context.l10n.authNotConfigured,
+                          style: authController.needsReauthentication
+                              ? TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                )
+                              : null,
                         ),
                         trailing: authController.isBusy
                             ? const SizedBox.square(
@@ -132,7 +152,8 @@ class SettingsScreen extends ConsumerWidget {
                                     ? null
                                     : authController.isAuthenticated
                                     ? authController.logout
-                                    : authController.login,
+                                    : () =>
+                                          _signIn(context, ref, authController),
                                 child: Text(
                                   authController.isAuthenticated
                                       ? context.l10n.logout
@@ -157,47 +178,22 @@ class SettingsScreen extends ConsumerWidget {
                             right: 10,
                           ),
                           leading: const Icon(Icons.cloud_sync_outlined),
-                          title: Text(context.l10n.cloudBackup),
-                          subtitle: Text(context.l10n.cloudBackupDescription),
+                          title: Text(context.l10n.cloudDataSync),
+                          subtitle: Text(context.l10n.cloudDataSyncDescription),
                           trailing: CustomSwitch(
                             value: authController.cloudSyncEnabled,
                             onChanged: authController.setCloudSyncEnabled,
                           ),
                         ),
-                      if (authController.isAuthenticated &&
-                          authController.cloudSyncEnabled)
+                      if (authController.isAuthenticated)
                         ListTile(
                           contentPadding: const EdgeInsets.only(
                             left: 5,
                             right: 10,
                           ),
-                          leading: const Icon(Icons.cloud_upload_outlined),
-                          title: Text(context.l10n.cloudBackupNow),
-                          subtitle: authController.cloudBackupRunning
-                              ? Text(
-                                  (authController.cloudBackupProgress?.total ??
-                                              0) >
-                                          0
-                                      ? context.l10n.cloudBackupProgress(
-                                          authController
-                                              .cloudBackupProgress!
-                                              .completed,
-                                          authController
-                                              .cloudBackupProgress!
-                                              .total,
-                                          authController
-                                              .cloudBackupProgress!
-                                              .percentage,
-                                        )
-                                      : context.l10n.cloudBackupInProgress,
-                                )
-                              : null,
-                          onTap: authController.cloudBackupRunning
-                              ? null
-                              : () => _runCloudAudioBackup(
-                                  context,
-                                  authController,
-                                ),
+                          leading: const Icon(Icons.devices_outlined),
+                          title: Text(context.l10n.deviceControl),
+                          subtitle: Text(context.l10n.deviceControlDescription),
                         ),
                     ],
                   ),
@@ -1007,6 +1003,36 @@ class SettingsScreen extends ConsumerWidget {
                             ),
                           ),
                         ),
+                      if (kDebugMode && authController.isAuthenticated)
+                        ListTile(
+                          contentPadding: const EdgeInsets.only(
+                            left: 5,
+                            right: 10,
+                          ),
+                          leading: const Icon(Icons.token_outlined),
+                          title: Text(context.l10n.debugRefreshAuthToken),
+                          subtitle: Text(
+                            context.l10n.debugRefreshAuthTokenDescription,
+                          ),
+                          trailing: AwaitableIconButton(
+                            icon: const Icon(Icons.refresh),
+                            onPressed: () async {
+                              final refreshed = await authController
+                                  .refreshAccessToken();
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                snackbar(
+                                  context,
+                                  refreshed
+                                      ? context.l10n.debugAuthTokenRefreshed
+                                      : context
+                                            .l10n
+                                            .debugAuthTokenRefreshFailed,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
                     ],
                   ),
                   CustomExpansionTile(
@@ -1029,28 +1055,6 @@ class SettingsScreen extends ConsumerWidget {
                               .value,
                           onChanged:
                               settingsController.toggleAutoDownloadFavoriteSong,
-                        ),
-                      ),
-                      ListTile(
-                        contentPadding: const EdgeInsets.only(
-                          left: 5,
-                          right: 10,
-                        ),
-                        leading: const Icon(Icons.refresh_outlined),
-                        title: Text(context.l10n.retryFailedDownloads),
-                        subtitle: Text(
-                          context.l10n.retryFailedDownloadsDescription(
-                            downloader.failedDownloadCount.value,
-                          ),
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                        trailing: AwaitableButton.text(
-                          label: Text(context.l10n.retry),
-                          onPressed:
-                              downloader.failedDownloadCount.value == 0 ||
-                                  downloader.isJobRunning.value
-                              ? null
-                              : downloader.retryFailedDownloads,
                         ),
                       ),
                       ListTile(
@@ -1182,8 +1186,11 @@ class SettingsScreen extends ConsumerWidget {
                           );
                         },
                       ),
-                      if (RuntimePlatform.isAndroid) const Divider(),
-                      if (RuntimePlatform.isAndroid)
+                      if (RuntimePlatform.isAndroid &&
+                          settingsController.developerSettingsEnabled.value)
+                        const Divider(),
+                      if (RuntimePlatform.isAndroid &&
+                          settingsController.developerSettingsEnabled.value)
                         ListTile(
                           contentPadding: const EdgeInsets.only(
                             left: 5,
@@ -1197,7 +1204,8 @@ class SettingsScreen extends ConsumerWidget {
                           isThreeLine: true,
                           onTap: settingsController.exportDeveloperClonePackage,
                         ),
-                      if (RuntimePlatform.isAndroid)
+                      if (RuntimePlatform.isAndroid &&
+                          settingsController.developerSettingsEnabled.value)
                         ListTile(
                           contentPadding: const EdgeInsets.only(
                             left: 5,
@@ -1471,6 +1479,52 @@ class _DeveloperSettingsInspector extends ConsumerWidget {
   }
 }
 
+/// Signs in, first asking what to do with a library this device already holds.
+///
+/// Only reachable on a device that has never been signed in — an account switch
+/// wipes without asking, because that library provably belongs to someone else.
+/// Here it may well be the same person's music collected offline, so discarding
+/// it silently would be the wrong default.
+Future<void> _signIn(
+  BuildContext context,
+  WidgetRef ref,
+  AuthController controller,
+) async {
+  controller.onFirstSignInWithLocalLibrary = () async {
+    final library = ref.read(libraryRepositoryProvider);
+    final hasLocalLibrary =
+        (await library.getFavoriteSongs()).isNotEmpty ||
+        (await ref.read(playlistRepositoryProvider).getPlaylists())
+            .isNotEmpty ||
+        (await library.getAlbums()).isNotEmpty;
+    if (!hasLocalLibrary || !context.mounted) return false;
+
+    final replace = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.l10n.existingLibraryTitle),
+        content: Text(dialogContext.l10n.existingLibraryMessage),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(dialogContext.l10n.replaceWithAccountLibrary),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(dialogContext.l10n.mergeIntoAccount),
+          ),
+        ],
+      ),
+    );
+    return replace ?? false;
+  };
+  try {
+    await controller.login();
+  } finally {
+    controller.onFirstSignInWithLocalLibrary = null;
+  }
+}
+
 Future<void> _showCloudOptInDialog(
   BuildContext context,
   AuthController controller,
@@ -1499,80 +1553,6 @@ Future<void> _showCloudOptInDialog(
     if (enabled != null) await controller.setCloudSyncEnabled(enabled);
   } finally {
     _cloudOptInDialogOpen = false;
-  }
-}
-
-Future<void> _runCloudAudioBackup(
-  BuildContext context,
-  AuthController controller, {
-  bool overrideBatteryPolicy = false,
-}) async {
-  final messenger = ScaffoldMessenger.of(context);
-  try {
-    final result = await controller.backupCloudAudioNow(
-      overrideBatteryPolicy: overrideBatteryPolicy,
-    );
-    if (!context.mounted) return;
-    if (result == CloudAudioBackupResult.batteryTooLow) {
-      final continueBackup = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(dialogContext.l10n.cloudBackupLowBatteryTitle),
-          content: Text(dialogContext.l10n.cloudBackupLowBatteryMessage),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(dialogContext.l10n.cancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: Text(dialogContext.l10n.cloudBackupAnyway),
-            ),
-          ],
-        ),
-      );
-      if (continueBackup == true && context.mounted) {
-        await _runCloudAudioBackup(
-          context,
-          controller,
-          overrideBatteryPolicy: true,
-        );
-      }
-      return;
-    }
-    final message = switch (result) {
-      CloudAudioBackupResult.completed => context.l10n.cloudBackupComplete,
-      CloudAudioBackupResult.wifiRequired =>
-        context.l10n.cloudBackupWifiRequired,
-      CloudAudioBackupResult.alreadyRunning =>
-        context.l10n.cloudBackupInProgress,
-      CloudAudioBackupResult.disabled => context.l10n.cloudBackupFailed,
-      CloudAudioBackupResult.batteryTooLow => context.l10n.cloudBackupFailed,
-      CloudAudioBackupResult.authenticationRequired =>
-        context.l10n.cloudBackupAuthenticationRequired,
-      CloudAudioBackupResult.permissionDenied =>
-        context.l10n.cloudBackupPermissionDenied,
-      CloudAudioBackupResult.serviceUnavailable =>
-        context.l10n.cloudBackupServiceUnavailable,
-      CloudAudioBackupResult.networkFailure =>
-        context.l10n.cloudBackupNetworkFailure,
-    };
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        snackbar(context, message, duration: const Duration(seconds: 3)),
-      );
-  } catch (_) {
-    if (!context.mounted) return;
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        snackbar(
-          context,
-          context.l10n.cloudBackupFailed,
-          duration: const Duration(seconds: 3),
-        ),
-      );
   }
 }
 

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '/services/app_contracts.dart';
 import '/services/constant.dart';
 import '/services/crash_diagnostics_service.dart';
+import '/utils/runtime_platform.dart';
 import '/ui/navigator.dart';
 import '/ui/widgets/sort_widget.dart';
 
@@ -247,7 +248,7 @@ class GithubUpdateService implements UpdateServiceContract {
         final release = (await Dio().get(
           "https://api.github.com/repos/bozmund/Harmony-Music/releases/tags/$latestTag",
         )).data;
-        downloadUrl = _releaseApkDownloadUrl(release);
+        downloadUrl = _releaseDownloadUrl(release);
         releaseUrl = release['html_url'] as String?;
       } catch (_) {
         // Keep the update notification useful even if release metadata fails.
@@ -274,7 +275,7 @@ Future<UpdateInfo?> _rollingVersionCheck() async {
     return null;
   }
 
-  final browserDownloadUrl = _releaseApkDownloadUrl(release);
+  final browserDownloadUrl = _releaseDownloadUrl(release);
 
   return UpdateInfo(
     channel: UpdateChannel.rolling,
@@ -290,15 +291,18 @@ Future<UpdateInfo?> _rollingVersionCheck() async {
   );
 }
 
-String? _releaseApkDownloadUrl(dynamic release) {
+String? _releaseDownloadUrl(dynamic release) {
   final assets = (release['assets'] as List?) ?? [];
-  final apkAsset = assets.cast<dynamic>().firstWhere(
+  final extension = RuntimePlatform.isWindows ? '.exe' : '.apk';
+  final platformAsset = assets.cast<dynamic>().firstWhere(
     (asset) =>
         asset is Map &&
-        (asset['name'] as String? ?? '').toLowerCase().endsWith('.apk'),
+        (asset['name'] as String? ?? '').toLowerCase().endsWith(extension),
     orElse: () => null,
   );
-  return apkAsset is Map ? apkAsset['browser_download_url'] as String? : null;
+  return platformAsset is Map
+      ? platformAsset['browser_download_url'] as String?
+      : null;
 }
 
 String? _rollingReleaseSha(dynamic release) {

@@ -1,10 +1,12 @@
 import 'dart:convert';
 
 import 'package:auth0_flutter/auth0_flutter.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../utils/runtime_platform.dart';
+import 'app_contracts.dart';
 
 /// Service that wraps Auth0 authentication for Harmony Music.
 ///
@@ -12,9 +14,16 @@ import '../utils/runtime_platform.dart';
 /// - Android/iOS/macOS → auth0_flutter's built-in CredentialsManager.
 /// - Windows          → flutter_secure_storage (SDK doesn't manage
 ///                      credentials on desktop).
-class Auth0Service {
+class Auth0Service implements AuthServiceContract {
+  // The Windows runner and installed protocol registration are compiled with
+  // this callback. Unlike mobile, Windows cannot discover a custom scheme
+  // dynamically from the bundled .env file before protocol activation.
+  static const _windowsCallbackScheme = 'harmonymusic';
+
   Auth0Service._(
     this._auth0,
+    this._domain,
+    this._clientId,
     this._scheme,
     this._audience,
     this._storage,
@@ -22,18 +31,25 @@ class Auth0Service {
   );
 
   late final Auth0 _auth0;
+  late final String _domain;
+  late final String _clientId;
   late final String _scheme;
   late final String _audience;
   late final FlutterSecureStorage _storage;
+  Future<String?>? _windowsRefreshInFlight;
 
   final bool isConfigured;
 
   bool get isSupportedPlatform =>
       RuntimePlatform.isAndroid ||
       RuntimePlatform.isIOS ||
-      RuntimePlatform.isMacOS;
+      RuntimePlatform.isMacOS ||
+      RuntimePlatform.isWindows;
 
   bool get isAvailable => isConfigured && isSupportedPlatform;
+
+  String get _callbackScheme =>
+      RuntimePlatform.isWindows ? _windowsCallbackScheme : _scheme;
 
   /// Use [domain] from `.env` or a fallback so the app doesn't crash
   /// when `.env` is missing; the service will simply remain
@@ -48,6 +64,8 @@ class Auth0Service {
     final audience = dotenv.get('AUTH0_AUDIENCE', fallback: '');
     return Auth0Service._(
       Auth0(domain, clientId),
+      domain,
+      clientId,
       scheme,
       audience,
       const FlutterSecureStorage(),
@@ -85,14 +103,19 @@ class Auth0Service {
         'Auth0 is not configured. Add AUTH0_DOMAIN and AUTH0_CLIENT_ID to .env.',
       );
     }
+    const scopes = {'openid', 'profile', 'email', 'offline_access'};
     final credentials = RuntimePlatform.isWindows
         ? await _auth0.windowsWebAuthentication().login(
-            appCustomURL: '$_scheme://callback',
+            appCustomURL: '$_callbackScheme://callback',
             audience: _audience.isEmpty ? null : _audience,
+            scopes: scopes,
           )
         : await _auth0
               .webAuthentication(scheme: _scheme)
-              .login(audience: _audience.isEmpty ? null : _audience);
+              .login(
+                audience: _audience.isEmpty ? null : _audience,
+                scopes: scopes,
+              );
     await _persistCredentials(credentials);
     return credentials.user;
   }
@@ -103,7 +126,7 @@ class Auth0Service {
     try {
       if (RuntimePlatform.isWindows) {
         await _auth0.windowsWebAuthentication().logout(
-          appCustomURL: '$_scheme://callback',
+          appCustomURL: '$_callbackScheme://callback',
         );
       } else {
         await _auth0.webAuthentication(scheme: _scheme).logout();
@@ -119,17 +142,16 @@ class Auth0Service {
 
   /// Returns a refreshed Resolver API access token when a session exists.
   /// Missing sessions remain anonymous; token values must never be logged.
-  Future<String?> accessToken() async {
+  Future<String?> accessToken({bool forceRefresh = false}) async {
     if (!isAvailable || _audience.isEmpty) return null;
     try {
       if (RuntimePlatform.isWindows) {
-        final raw = await _storage.read(key: 'auth0_credentials');
-        if (raw == null) return null;
-        final map = jsonDecode(raw) as Map<String, dynamic>;
-        return map['accessToken'] as String?;
+        return _windowsAccessToken(forceRefresh: forceRefresh);
       }
       final credentials = await _auth0.credentialsManager.credentials(
-        minTtl: 60,
+        // A debug-triggered refresh deliberately exceeds any normal access
+        // token lifetime, making CredentialsManager use its refresh token.
+        minTtl: forceRefresh ? 365 * 24 * 60 * 60 : 60,
         parameters: {'audience': _audience},
       );
       return credentials.accessToken;
@@ -151,6 +173,7 @@ class Auth0Service {
           'accessToken': credentials.accessToken,
           'idToken': credentials.idToken,
           'refreshToken': credentials.refreshToken,
+          'expiresAt': credentials.expiresAt.toUtc().toIso8601String(),
           'user': userJson,
         }),
       );
@@ -172,6 +195,81 @@ class Auth0Service {
       final map = jsonDecode(raw) as Map<String, dynamic>;
       return UserProfile.fromMap(map['user'] as Map<String, dynamic>);
     } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _windowsAccessToken({required bool forceRefresh}) async {
+    final raw = await _storage.read(key: 'auth0_credentials');
+    if (raw == null) return null;
+    final credentials = jsonDecode(raw) as Map<String, dynamic>;
+    final accessToken = credentials['accessToken'] as String?;
+    final expiresAt = DateTime.tryParse(
+      credentials['expiresAt']?.toString() ?? '',
+    )?.toUtc();
+    final needsRefresh =
+        forceRefresh ||
+        expiresAt == null ||
+        !expiresAt.isAfter(
+          DateTime.now().toUtc().add(const Duration(minutes: 1)),
+        );
+    if (!needsRefresh) return accessToken;
+
+    final refreshToken = credentials['refreshToken'] as String?;
+    if (refreshToken == null || refreshToken.isEmpty) return null;
+    return _windowsRefreshInFlight ??= _refreshWindowsCredentials(
+      credentials,
+      refreshToken,
+    ).whenComplete(() => _windowsRefreshInFlight = null);
+  }
+
+  Future<String?> _refreshWindowsCredentials(
+    Map<String, dynamic> credentials,
+    String refreshToken,
+  ) async {
+    try {
+      final response = await Dio().postUri<Map<String, dynamic>>(
+        Uri.https(_domain, '/oauth/token'),
+        data: {
+          'grant_type': 'refresh_token',
+          'client_id': _clientId,
+          'refresh_token': refreshToken,
+          // Without this the refresh grant mints a token for Auth0's *default*
+          // audience instead of the Resolver API, and Harmony Cloud answers 401
+          // to every call made with it — socket upgrade, session read, command
+          // drain, state publish. It never recovers on its own either: each
+          // retry refreshes and gets another audience-less token, so a Windows
+          // device silently drops out of cross-device playback the first time
+          // its login token expires. Login and the mobile path have always sent
+          // the audience; only this one leg forgot.
+          if (_audience.isNotEmpty) 'audience': _audience,
+        },
+        options: Options(contentType: Headers.formUrlEncodedContentType),
+      );
+      final data = response.data;
+      final accessToken = data?['access_token'] as String?;
+      final expiresIn = (data?['expires_in'] as num?)?.toInt();
+      if (accessToken == null || accessToken.isEmpty || expiresIn == null) {
+        return null;
+      }
+      credentials['accessToken'] = accessToken;
+      credentials['refreshToken'] = data?['refresh_token'] ?? refreshToken;
+      credentials['expiresAt'] = DateTime.now()
+          .toUtc()
+          .add(Duration(seconds: expiresIn))
+          .toIso8601String();
+      await _storage.write(
+        key: 'auth0_credentials',
+        value: jsonEncode(credentials),
+      );
+      return accessToken;
+    } on DioException catch (error) {
+      // An invalid or revoked refresh token cannot recover silently. Network
+      // failures keep the stored session intact so a later retry can succeed.
+      if (error.response?.statusCode == 400 ||
+          error.response?.statusCode == 401) {
+        await _clearPersistedCredentials();
+      }
       return null;
     }
   }

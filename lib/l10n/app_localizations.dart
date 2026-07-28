@@ -2390,16 +2390,40 @@ abstract class AppLocalizations {
   /// **'Securely sync your library, settings and downloaded-song inventory.'**
   String get cloudBackupDescription;
 
+  /// No description provided for @cloudDataSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud data sync'**
+  String get cloudDataSync;
+
+  /// No description provided for @cloudDataSyncDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync your library, playlists, likes and safe settings across devices.'**
+  String get cloudDataSyncDescription;
+
+  /// No description provided for @deviceControl.
+  ///
+  /// In en, this message translates to:
+  /// **'Device control'**
+  String get deviceControl;
+
+  /// No description provided for @deviceControlDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'This signed-in device is available to your Harmony account.'**
+  String get deviceControlDescription;
+
   /// No description provided for @cloudBackupPrompt.
   ///
   /// In en, this message translates to:
-  /// **'Keep your Harmony data backed up and synchronized across devices?'**
+  /// **'Synchronize your Harmony library, playlists, likes and safe settings across devices?'**
   String get cloudBackupPrompt;
 
   /// No description provided for @cloudBackupEnable.
   ///
   /// In en, this message translates to:
-  /// **'Enable backup'**
+  /// **'Enable data sync'**
   String get cloudBackupEnable;
 
   /// No description provided for @cloudBackupNotNow.
@@ -2407,84 +2431,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Not now'**
   String get cloudBackupNotNow;
-
-  /// No description provided for @cloudBackupNow.
-  ///
-  /// In en, this message translates to:
-  /// **'Back up downloaded songs now'**
-  String get cloudBackupNow;
-
-  /// No description provided for @cloudBackupInProgress.
-  ///
-  /// In en, this message translates to:
-  /// **'Backing up downloaded songs…'**
-  String get cloudBackupInProgress;
-
-  /// No description provided for @cloudBackupProgress.
-  ///
-  /// In en, this message translates to:
-  /// **'Backing up downloaded songs: {completed} of {total} ({percentage}%)'**
-  String cloudBackupProgress(int completed, int total, int percentage);
-
-  /// No description provided for @cloudBackupComplete.
-  ///
-  /// In en, this message translates to:
-  /// **'Downloaded-song backup finished.'**
-  String get cloudBackupComplete;
-
-  /// No description provided for @cloudBackupWifiRequired.
-  ///
-  /// In en, this message translates to:
-  /// **'Connect to Wi-Fi to back up downloaded songs.'**
-  String get cloudBackupWifiRequired;
-
-  /// No description provided for @cloudBackupFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Cloud backup failed. Try again.'**
-  String get cloudBackupFailed;
-
-  /// No description provided for @cloudBackupAuthenticationRequired.
-  ///
-  /// In en, this message translates to:
-  /// **'Sign in again before backing up downloaded songs.'**
-  String get cloudBackupAuthenticationRequired;
-
-  /// No description provided for @cloudBackupPermissionDenied.
-  ///
-  /// In en, this message translates to:
-  /// **'Cloud backup is not authorized for this account yet.'**
-  String get cloudBackupPermissionDenied;
-
-  /// No description provided for @cloudBackupServiceUnavailable.
-  ///
-  /// In en, this message translates to:
-  /// **'Cloud backup service is unavailable. Try again later.'**
-  String get cloudBackupServiceUnavailable;
-
-  /// No description provided for @cloudBackupNetworkFailure.
-  ///
-  /// In en, this message translates to:
-  /// **'Cloud backup could not reach the service. Check your connection.'**
-  String get cloudBackupNetworkFailure;
-
-  /// No description provided for @cloudBackupLowBatteryTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Battery is low'**
-  String get cloudBackupLowBatteryTitle;
-
-  /// No description provided for @cloudBackupLowBatteryMessage.
-  ///
-  /// In en, this message translates to:
-  /// **'Your battery is below 50%. Backing up downloaded songs may use significant power.'**
-  String get cloudBackupLowBatteryMessage;
-
-  /// No description provided for @cloudBackupAnyway.
-  ///
-  /// In en, this message translates to:
-  /// **'Back up anyway'**
-  String get cloudBackupAnyway;
 
   /// No description provided for @shareAndroidApp.
   ///
@@ -2498,17 +2444,173 @@ abstract class AppLocalizations {
   /// **'Share a direct link to the latest Android APK.'**
   String get shareAndroidAppDescription;
 
-  /// No description provided for @retryFailedDownloads.
+  /// No description provided for @playOnDevice.
   ///
   /// In en, this message translates to:
-  /// **'Retry failed downloads'**
-  String get retryFailedDownloads;
+  /// **'Play on a device'**
+  String get playOnDevice;
 
-  /// No description provided for @retryFailedDownloadsDescription.
+  /// No description provided for @noOtherDevices.
   ///
   /// In en, this message translates to:
-  /// **'{count} failed song downloads are ready to retry.'**
-  String retryFailedDownloadsDescription(int count);
+  /// **'No other signed-in Harmony devices are available.'**
+  String get noOtherDevices;
+
+  /// No description provided for @deviceUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Unavailable'**
+  String get deviceUnavailable;
+
+  /// No description provided for @deviceBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'Available in background'**
+  String get deviceBackground;
+
+  /// No description provided for @deviceOnline.
+  ///
+  /// In en, this message translates to:
+  /// **'Online'**
+  String get deviceOnline;
+
+  /// No description provided for @handoffRequested.
+  ///
+  /// In en, this message translates to:
+  /// **'Playback handoff requested.'**
+  String get handoffRequested;
+
+  /// No description provided for @deviceControlUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Device control is unavailable. Try again later.'**
+  String get deviceControlUnavailable;
+
+  /// No description provided for @cloudPlaybackReconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnecting…'**
+  String get cloudPlaybackReconnecting;
+
+  /// No description provided for @tapToLeaveSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced — tap to leave'**
+  String get tapToLeaveSync;
+
+  /// No description provided for @debugRefreshAuthToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh Auth0 token'**
+  String get debugRefreshAuthToken;
+
+  /// No description provided for @debugRefreshAuthTokenDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Debug only: silently request a fresh sign-in token.'**
+  String get debugRefreshAuthTokenDescription;
+
+  /// No description provided for @debugAuthTokenRefreshed.
+  ///
+  /// In en, this message translates to:
+  /// **'Auth0 token refreshed.'**
+  String get debugAuthTokenRefreshed;
+
+  /// No description provided for @debugAuthTokenRefreshFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not refresh the Auth0 token. Sign in again.'**
+  String get debugAuthTokenRefreshFailed;
+
+  /// No description provided for @filter.
+  ///
+  /// In en, this message translates to:
+  /// **'Filter'**
+  String get filter;
+
+  /// No description provided for @showDownloadsNotInLibrary.
+  ///
+  /// In en, this message translates to:
+  /// **'Show downloads not in your library'**
+  String get showDownloadsNotInLibrary;
+
+  /// No description provided for @includeCachedSongs.
+  ///
+  /// In en, this message translates to:
+  /// **'Include cached songs'**
+  String get includeCachedSongs;
+
+  /// No description provided for @songsFilteredToLibrary.
+  ///
+  /// In en, this message translates to:
+  /// **'Songs shows downloads that are in your library. None of your downloads are liked yet.'**
+  String get songsFilteredToLibrary;
+
+  /// No description provided for @showAllDownloads.
+  ///
+  /// In en, this message translates to:
+  /// **'Show all downloads'**
+  String get showAllDownloads;
+
+  /// No description provided for @downloadNotInLibraryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'This song is not in your library'**
+  String get downloadNotInLibraryTitle;
+
+  /// No description provided for @downloadNotInLibraryMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Songs shows downloads that are in your library. Download it anyway and it stays on this device, but it will not appear there until you like it.'**
+  String get downloadNotInLibraryMessage;
+
+  /// No description provided for @likeAndDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Like and download'**
+  String get likeAndDownload;
+
+  /// No description provided for @downloadOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Download only'**
+  String get downloadOnly;
+
+  /// No description provided for @dontAskAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Don\'t ask again'**
+  String get dontAskAgain;
+
+  /// No description provided for @existingLibraryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Music already on this device'**
+  String get existingLibraryTitle;
+
+  /// No description provided for @existingLibraryMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This device has a library that is not linked to any account yet. Add it to your account, or replace it with the library already in your account. Downloaded files are kept either way.'**
+  String get existingLibraryMessage;
+
+  /// No description provided for @mergeIntoAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Add to my account'**
+  String get mergeIntoAccount;
+
+  /// No description provided for @replaceWithAccountLibrary.
+  ///
+  /// In en, this message translates to:
+  /// **'Use my account\'s library'**
+  String get replaceWithAccountLibrary;
+
+  /// No description provided for @sessionExpiredMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'You have been signed out. Sync is paused until you sign back in.'**
+  String get sessionExpiredMessage;
 }
 
 class _AppLocalizationsDelegate

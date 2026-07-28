@@ -1216,61 +1216,28 @@ class AppLocalizationsEn extends AppLocalizations {
       'Securely sync your library, settings and downloaded-song inventory.';
 
   @override
-  String get cloudBackupPrompt =>
-      'Keep your Harmony data backed up and synchronized across devices?';
+  String get cloudDataSync => 'Cloud data sync';
 
   @override
-  String get cloudBackupEnable => 'Enable backup';
+  String get cloudDataSyncDescription =>
+      'Sync your library, playlists, likes and safe settings across devices.';
+
+  @override
+  String get deviceControl => 'Device control';
+
+  @override
+  String get deviceControlDescription =>
+      'This signed-in device is available to your Harmony account.';
+
+  @override
+  String get cloudBackupPrompt =>
+      'Synchronize your Harmony library, playlists, likes and safe settings across devices?';
+
+  @override
+  String get cloudBackupEnable => 'Enable data sync';
 
   @override
   String get cloudBackupNotNow => 'Not now';
-
-  @override
-  String get cloudBackupNow => 'Back up downloaded songs now';
-
-  @override
-  String get cloudBackupInProgress => 'Backing up downloaded songs…';
-
-  @override
-  String cloudBackupProgress(int completed, int total, int percentage) {
-    return 'Backing up downloaded songs: $completed of $total ($percentage%)';
-  }
-
-  @override
-  String get cloudBackupComplete => 'Downloaded-song backup finished.';
-
-  @override
-  String get cloudBackupWifiRequired =>
-      'Connect to Wi-Fi to back up downloaded songs.';
-
-  @override
-  String get cloudBackupFailed => 'Cloud backup failed. Try again.';
-
-  @override
-  String get cloudBackupAuthenticationRequired =>
-      'Sign in again before backing up downloaded songs.';
-
-  @override
-  String get cloudBackupPermissionDenied =>
-      'Cloud backup is not authorized for this account yet.';
-
-  @override
-  String get cloudBackupServiceUnavailable =>
-      'Cloud backup service is unavailable. Try again later.';
-
-  @override
-  String get cloudBackupNetworkFailure =>
-      'Cloud backup could not reach the service. Check your connection.';
-
-  @override
-  String get cloudBackupLowBatteryTitle => 'Battery is low';
-
-  @override
-  String get cloudBackupLowBatteryMessage =>
-      'Your battery is below 50%. Backing up downloaded songs may use significant power.';
-
-  @override
-  String get cloudBackupAnyway => 'Back up anyway';
 
   @override
   String get shareAndroidApp => 'Share Harmony Music';
@@ -1280,10 +1247,94 @@ class AppLocalizationsEn extends AppLocalizations {
       'Share a direct link to the latest Android APK.';
 
   @override
-  String get retryFailedDownloads => 'Retry failed downloads';
+  String get playOnDevice => 'Play on a device';
 
   @override
-  String retryFailedDownloadsDescription(int count) {
-    return '$count failed song downloads are ready to retry.';
-  }
+  String get noOtherDevices =>
+      'No other signed-in Harmony devices are available.';
+
+  @override
+  String get deviceUnavailable => 'Unavailable';
+
+  @override
+  String get deviceBackground => 'Available in background';
+
+  @override
+  String get deviceOnline => 'Online';
+
+  @override
+  String get handoffRequested => 'Playback handoff requested.';
+
+  @override
+  String get deviceControlUnavailable =>
+      'Device control is unavailable. Try again later.';
+
+  @override
+  String get cloudPlaybackReconnecting => 'Reconnecting…';
+
+  @override
+  String get tapToLeaveSync => 'Synced — tap to leave';
+
+  @override
+  String get debugRefreshAuthToken => 'Refresh Auth0 token';
+
+  @override
+  String get debugRefreshAuthTokenDescription =>
+      'Debug only: silently request a fresh sign-in token.';
+
+  @override
+  String get debugAuthTokenRefreshed => 'Auth0 token refreshed.';
+
+  @override
+  String get debugAuthTokenRefreshFailed =>
+      'Could not refresh the Auth0 token. Sign in again.';
+
+  @override
+  String get filter => 'Filter';
+
+  @override
+  String get showDownloadsNotInLibrary => 'Show downloads not in your library';
+
+  @override
+  String get includeCachedSongs => 'Include cached songs';
+
+  @override
+  String get songsFilteredToLibrary =>
+      'Songs shows downloads that are in your library. None of your downloads are liked yet.';
+
+  @override
+  String get showAllDownloads => 'Show all downloads';
+
+  @override
+  String get downloadNotInLibraryTitle => 'This song is not in your library';
+
+  @override
+  String get downloadNotInLibraryMessage =>
+      'Songs shows downloads that are in your library. Download it anyway and it stays on this device, but it will not appear there until you like it.';
+
+  @override
+  String get likeAndDownload => 'Like and download';
+
+  @override
+  String get downloadOnly => 'Download only';
+
+  @override
+  String get dontAskAgain => 'Don\'t ask again';
+
+  @override
+  String get existingLibraryTitle => 'Music already on this device';
+
+  @override
+  String get existingLibraryMessage =>
+      'This device has a library that is not linked to any account yet. Add it to your account, or replace it with the library already in your account. Downloaded files are kept either way.';
+
+  @override
+  String get mergeIntoAccount => 'Add to my account';
+
+  @override
+  String get replaceWithAccountLibrary => 'Use my account\'s library';
+
+  @override
+  String get sessionExpiredMessage =>
+      'You have been signed out. Sync is paused until you sign back in.';
 }

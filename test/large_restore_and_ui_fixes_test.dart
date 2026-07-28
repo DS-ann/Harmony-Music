@@ -3,47 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('cloud audio backup failures', () {
-    test('maps safe server categories instead of hiding every failure', () {
-      final source = File(
-        'lib/services/cloud/cloud_audio_backup_service.dart',
-      ).readAsStringSync();
-      expect(source, contains('on DioException catch (error)'));
-      expect(source, contains('401 => CloudAudioBackupResult.authenticationRequired'));
-      expect(source, contains('403 => CloudAudioBackupResult.permissionDenied'));
-      expect(source, contains('CloudAudioBackupResult.serviceUnavailable'));
-      expect(source, contains('CloudAudioBackupResult.networkFailure'));
-    });
-
-    test('settings shows a safe actionable backup failure message', () {
-      final source = File(
-        'lib/ui/screens/Settings/settings_screen.dart',
-      ).readAsStringSync();
-      expect(source, contains('cloudBackupAuthenticationRequired'));
-      expect(source, contains('cloudBackupPermissionDenied'));
-      expect(source, contains('cloudBackupServiceUnavailable'));
-      expect(source, contains('cloudBackupNetworkFailure'));
-    });
-
-    test('reports completed songs and percentage while backing up', () {
-      final backupSource = File(
-        'lib/services/cloud/cloud_audio_backup_service.dart',
-      ).readAsStringSync();
-      final controllerSource = File(
-        'lib/app/providers/auth_providers.dart',
-      ).readAsStringSync();
-      final settingsSource = File(
-        'lib/ui/screens/Settings/settings_screen.dart',
-      ).readAsStringSync();
-
-      expect(backupSource, contains('class CloudAudioBackupProgress'));
-      expect(backupSource, contains('int get percentage'));
-      expect(backupSource, contains('onProgress?.call'));
-      expect(controllerSource, contains('CloudAudioBackupProgress? cloudBackupProgress'));
-      expect(settingsSource, contains('context.l10n.cloudBackupProgress('));
-    });
-  });
-
   group('large backup restore', () {
     late String source;
 

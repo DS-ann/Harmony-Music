@@ -6,6 +6,9 @@ import '/services/constant.dart';
 import '../navigator.dart';
 import 'image_widget.dart';
 
+/// Leaves room for a two-line title and one-line subtitle below the 120px art.
+const contentListItemHeight = 192.0;
+
 class ContentListItem extends StatelessWidget {
   const ContentListItem({
     super.key,
@@ -68,7 +71,7 @@ class ContentListItem extends StatelessWidget {
       },
       child: Container(
         width: 130,
-        height: 180,
+        height: contentListItemHeight,
         padding: const EdgeInsets.symmetric(horizontal: 5),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -178,7 +181,7 @@ class ContentListItem extends StatelessWidget {
                     isAlbum
                         ? isLibraryItem
                               ? ""
-                              : "${content.artists[0]['name'] ?? ""} | ${content.year ?? ""}"
+                              : "${(content.artists as List?)?.isNotEmpty == true ? (content.artists[0]['name'] ?? "") : ""} | ${content.year ?? ""}"
                         : isLibraryItem
                         ? ""
                         : content.description ?? "",

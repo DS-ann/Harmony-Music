@@ -234,6 +234,20 @@ MediaItem parseSong(Map<dynamic, dynamic> result) {
   return MediaItemBuilder.fromJson(song);
 }
 
+/// Result-type labels that lead the subtitle of unfiltered search / card-shelf
+/// items ("Song • Artist • …"). Search forces hl=en, so these are always
+/// English. They are not artists and must not leak into the artists list.
+const _resultTypeLabels = <String>{
+  'song',
+  'video',
+  'album',
+  'single',
+  'ep',
+  'playlist',
+  'artist',
+  'station',
+};
+
 Map<String, dynamic> parseSongRuns(List<dynamic> runs) {
   Map<String, dynamic> parsed = {'artists': []};
   for (int i = 0; i < runs.length; i++) {
@@ -243,6 +257,14 @@ Map<String, dynamic> parseSongRuns(List<dynamic> runs) {
       continue;
     }
     String text = run['text'];
+    // Drop a leading result-type label so it is not parsed as an artist. A
+    // real artist run at this position carries a navigationEndpoint (or is not
+    // one of the known type words), so this only removes the type token.
+    if (i == 0 &&
+        !run.containsKey('navigationEndpoint') &&
+        _resultTypeLabels.contains(text.toLowerCase())) {
+      continue;
+    }
     if (run.containsKey('navigationEndpoint')) {
       // artist or album
       Map<String, dynamic> item = {

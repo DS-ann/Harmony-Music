@@ -9,7 +9,8 @@ void main() {
 
     test('rewrites cross-package path when restored file exists', () {
       final song = _librarySong(
-          '/data/user/0/com.anandnet.harmonymusic.prod/files/Music/song.opus');
+        '/data/user/0/com.anandnet.harmonymusic.prod/files/Music/song.opus',
+      );
 
       final rewritten = rewriteRestoredLibrarySong(
         song,
@@ -26,7 +27,7 @@ void main() {
       final song = _librarySong('/home/me/Music/song.m4a')
         ..['streamInfo'] = [
           true,
-          {'url': '/home/me/Music/song.m4a'}
+          {'url': '/home/me/Music/song.m4a'},
         ];
 
       final rewritten = rewriteRestoredLibrarySong(
@@ -52,8 +53,7 @@ void main() {
       expect(rewritten, isNull);
     });
 
-    test('leaves entry unchanged when url already points at restored file',
-        () {
+    test('leaves entry unchanged when url already points at restored file', () {
       final song = _librarySong('/app/support/Music/song.opus');
 
       final rewritten = rewriteRestoredLibrarySong(
@@ -66,15 +66,17 @@ void main() {
     });
 
     test('keeps entry but strips dead local path when no file exists', () {
-      final song = _librarySong(
-          '/data/user/0/com.anandnet.harmonymusic.prod/files/Music/song.opus')
-        ..['streamInfo'] = [
-          true,
-          {
-            'url':
-                '/data/user/0/com.anandnet.harmonymusic.prod/files/Music/song.opus'
-          }
-        ];
+      final song =
+          _librarySong(
+              '/data/user/0/com.anandnet.harmonymusic.prod/files/Music/song.opus',
+            )
+            ..['streamInfo'] = [
+              true,
+              {
+                'url':
+                    '/data/user/0/com.anandnet.harmonymusic.prod/files/Music/song.opus',
+              },
+            ];
 
       final rewritten = rewriteRestoredLibrarySong(
         song,
@@ -115,8 +117,11 @@ void main() {
 
     test('ignores non-map values', () {
       expect(
-        rewriteRestoredLibrarySong('not-a-map', supportDirPath,
-            fileExists: (_) => true),
+        rewriteRestoredLibrarySong(
+          'not-a-map',
+          supportDirPath,
+          fileExists: (_) => true,
+        ),
         isNull,
       );
     });
@@ -130,17 +135,21 @@ void main() {
     late String houseKeepingSource;
 
     setUpAll(() {
-      restoreDialogSource =
-          File('lib/ui/widgets/restore_dialog.dart').readAsStringSync();
-      restoreServiceSource =
-          File('lib/services/backup/restore_service.dart').readAsStringSync();
-      rewriterSource =
-          File('lib/services/backup/restore_path_rewriter.dart')
-              .readAsStringSync();
-      audioHandlerSource =
-          File('lib/services/audio_handler.dart').readAsStringSync();
-      houseKeepingSource =
-          File('lib/utils/house_keeping.dart').readAsStringSync();
+      restoreDialogSource = File(
+        'lib/ui/widgets/restore_dialog.dart',
+      ).readAsStringSync();
+      restoreServiceSource = File(
+        'lib/services/backup/restore_service.dart',
+      ).readAsStringSync();
+      rewriterSource = File(
+        'lib/services/backup/restore_path_rewriter.dart',
+      ).readAsStringSync();
+      audioHandlerSource = File(
+        'lib/services/audio_handler.dart',
+      ).readAsStringSync();
+      houseKeepingSource = File(
+        'lib/utils/house_keeping.dart',
+      ).readAsStringSync();
     });
 
     test('restore never deletes download entries', () {
@@ -152,7 +161,8 @@ void main() {
         expect(
           source.contains('deleteDownloadedSong'),
           isFalse,
-          reason: 'Restored downloads with missing files must be kept '
+          reason:
+              'Restored downloads with missing files must be kept '
               '(with their dead path stripped), not deleted, so the library '
               'song list survives a cross-package restore.',
         );
@@ -161,24 +171,29 @@ void main() {
 
     test('house keeping skips download entries without a url', () {
       // Stripped restore entries rely on this skip to survive house keeping.
-      final skipIndex =
-          houseKeepingSource.indexOf('if (songUrl is! String) continue;');
-      final deleteIndex =
-          houseKeepingSource.indexOf('deleteDownloadedSong(songKey)');
+      final skipIndex = houseKeepingSource.indexOf(
+        'if (songUrl is! String) continue;',
+      );
+      final deleteIndex = houseKeepingSource.indexOf(
+        'deleteDownloadedSong(songKey)',
+      );
 
       expect(skipIndex, greaterThan(-1));
       expect(deleteIndex, greaterThan(skipIndex));
     });
 
     test('downloaded stream info falls back when the entry has no url', () {
-      final methodStart = audioHandlerSource
-          .indexOf('Future<HMStreamingData?> _downloadedStreamInfoForSong(');
+      final methodStart = audioHandlerSource.indexOf(
+        'Future<HMStreamingData?> _downloadedStreamInfoForSong(',
+      );
       expect(methodStart, greaterThan(-1));
 
       final methodBody = audioHandlerSource.substring(
         methodStart,
-        audioHandlerSource.indexOf('_isLocalSourceUrl(String url)',
-            methodStart),
+        audioHandlerSource.indexOf(
+          '_isLocalSourceUrl(String url)',
+          methodStart,
+        ),
       );
       expect(
         methodBody,
@@ -187,36 +202,40 @@ void main() {
     });
 
     test('restore rewrites library paths after download paths', () {
-      final downloadRewriteIndex =
-          restoreServiceSource.indexOf('await rewriteRestoredDownloadPaths(');
-      final libraryRewriteIndex =
-          restoreServiceSource.indexOf('await rewriteRestoredLibraryPaths(');
+      final downloadRewriteIndex = restoreServiceSource.indexOf(
+        'await rewriteRestoredDownloadPaths(',
+      );
+      final libraryRewriteIndex = restoreServiceSource.indexOf(
+        'await rewriteRestoredLibraryPaths(',
+      );
 
       expect(downloadRewriteIndex, greaterThan(-1));
       expect(libraryRewriteIndex, greaterThan(downloadRewriteIndex));
     });
 
-    test('library rewrite covers library, playlist and session repositories',
-        () {
-      expect(
-        rewriterSource,
-        contains('libraryRepository.rewriteSongEntries(transform)'),
-      );
-      expect(
-        rewriterSource,
-        contains('playlistRepository.rewritePlaylistSongEntries(transform)'),
-      );
-      expect(
-        rewriterSource,
-        contains('playbackSessionRepository.rewriteQueueEntries(transform)'),
-      );
-    });
-
     test(
-        '_offlineStreamInfoForSong checks file existence before building '
+      'library rewrite covers library, playlist and session repositories',
+      () {
+        expect(
+          rewriterSource,
+          contains('libraryRepository.rewriteSongEntries(transform)'),
+        );
+        expect(
+          rewriterSource,
+          contains('playlistRepository.rewritePlaylistSongEntries(transform)'),
+        );
+        expect(
+          rewriterSource,
+          contains('playbackSessionRepository.rewriteQueueEntries(transform)'),
+        );
+      },
+    );
+
+    test('_offlineStreamInfoForSong checks file existence before building '
         'local stream info', () {
-      final methodStart = audioHandlerSource
-          .indexOf('Future<HMStreamingData?> _offlineStreamInfoForSong(');
+      final methodStart = audioHandlerSource.indexOf(
+        'Future<HMStreamingData?> _offlineStreamInfoForSong(',
+      );
       expect(methodStart, greaterThan(-1));
 
       final methodEnd = audioHandlerSource.indexOf(
@@ -227,36 +246,36 @@ void main() {
 
       final methodBody = audioHandlerSource.substring(methodStart, methodEnd);
       final guardIndex = methodBody.indexOf('_localSourceFileExists(url)');
-      final localStreamIndex =
-          methodBody.indexOf('_streamInfoFromLocalUrl(song, url)');
+      final localStreamIndex = methodBody.indexOf(
+        '_streamInfoFromLocalUrl(song, url)',
+      );
 
       expect(guardIndex, greaterThan(-1));
       expect(localStreamIndex, greaterThan(guardIndex));
     });
 
-    test('_localSourceFileExists resolves file:// urls and checks the disk',
-        () {
-      final helperStart =
-          audioHandlerSource.indexOf('Future<bool> _localSourceFileExists(');
-      expect(helperStart, greaterThan(-1));
+    test(
+      '_localSourceFileExists resolves file:// urls and checks the disk',
+      () {
+        final helperStart = audioHandlerSource.indexOf(
+          'Future<bool> _localSourceFileExists(',
+        );
+        expect(helperStart, greaterThan(-1));
 
-      final helperBody = audioHandlerSource.substring(
-        helperStart,
-        audioHandlerSource.indexOf('}', helperStart) + 1,
-      );
-      expect(helperBody, contains('uri.toFilePath()'));
-      expect(
-        audioHandlerSource.substring(helperStart),
-        contains('File(path).exists()'),
-      );
-    });
+        final helperBody = audioHandlerSource.substring(
+          helperStart,
+          audioHandlerSource.indexOf('}', helperStart) + 1,
+        );
+        expect(helperBody, contains('uri.toFilePath()'));
+        expect(
+          audioHandlerSource.substring(helperStart),
+          contains('File(path).exists()'),
+        );
+      },
+    );
   });
 }
 
 Map<dynamic, dynamic> _librarySong(String path) {
-  return {
-    'videoId': 'video-id',
-    'title': 'title',
-    'url': path,
-  };
+  return {'videoId': 'video-id', 'title': 'title', 'url': path};
 }

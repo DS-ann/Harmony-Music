@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: harmony-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.meta.outputs.channel }}
+      version: ${{ steps.meta.outputs.version }}
+      asset_suffix: ${{ steps.meta.outputs.asset_suffix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        shell: bash
+        run: |
+          version="$(awk '/^version:/ {print $2}' pubspec.yaml)"
+          semantic="${version%%+*}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            [[ "${GITHUB_REF_NAME#v}" == "${semantic}" ]] || exit 1
+            echo "channel=stable" >> "$GITHUB_OUTPUT"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            echo "asset_suffix=${semantic}-release" >> "$GITHUB_OUTPUT"
+          else
+            echo "channel=rolling" >> "$GITHUB_OUTPUT"
+            echo "version=${version}-main.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "asset_suffix=main-latest" >> "$GITHUB_OUTPUT"
+          fi
+
+  android:
+    needs: metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, flutter-version: 3.44.1 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: Configure public Auth0 client settings
+        env:
+          AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
+          AUTH0_CLIENT_ID: ${{ secrets.AUTH0_CLIENT_ID }}
+          AUTH0_REDIRECT_SCHEME: ${{ secrets.AUTH0_REDIRECT_SCHEME }}
+          AUTH0_AUDIENCE: ${{ vars.AUTH0_AUDIENCE }}
+        run: |
+          test -n "$AUTH0_DOMAIN" -a -n "$AUTH0_CLIENT_ID" -a -n "$AUTH0_REDIRECT_SCHEME" -a -n "$AUTH0_AUDIENCE"
+          printf 'AUTH0_DOMAIN=%s\nAUTH0_CLIENT_ID=%s\nAUTH0_REDIRECT_SCHEME=%s\nAUTH0_AUDIENCE=%s\n' "$AUTH0_DOMAIN" "$AUTH0_CLIENT_ID" "$AUTH0_REDIRECT_SCHEME" "$AUTH0_AUDIENCE" > .env
+      - run: flutter pub get
+      - name: Configure Firebase Cloud Messaging
+        env:
+          FIREBASE_ANDROID_GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICES_JSON }}
+        run: |
+          test -n "$FIREBASE_ANDROID_GOOGLE_SERVICES_JSON"
+          echo "$FIREBASE_ANDROID_GOOGLE_SERVICES_JSON" > android/app/google-services.json
+      - run: echo 'const updateCheckFlag = true;' > lib/utils/update_check_flag_file.dart
+      - name: Build signed APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ISSUE_REPORT_ENDPOINT: ${{ secrets.ISSUE_REPORT_ENDPOINT }}
+          RESOLVER_PRODUCTION_BASE_URL: ${{ vars.RESOLVER_PRODUCTION_BASE_URL }}
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64" -a -n "$ANDROID_KEYSTORE_PASSWORD" -a -n "$ANDROID_KEY_ALIAS" -a -n "$ANDROID_KEY_PASSWORD" -a -n "$ISSUE_REPORT_ENDPOINT" -a -n "$RESOLVER_PRODUCTION_BASE_URL"
+          mkdir -p android/app/keystore
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/keystore/release.jks
+          flutter build apk --release --build-number="$((1000000 + GITHUB_RUN_NUMBER))" --dart-define=ISSUE_REPORT_ENDPOINT="$ISSUE_REPORT_ENDPOINT" --dart-define=BUILD_CHANNEL="${{ needs.metadata.outputs.channel }}" --dart-define=BUILD_VERSION="${{ needs.metadata.outputs.version }}" --dart-define=BUILD_SHA="$GITHUB_SHA" --dart-define=RESOLVER_PRODUCTION_BASE_URL="$RESOLVER_PRODUCTION_BASE_URL"
+          cp build/app/outputs/flutter-apk/app-release.apk "harmonymusic-${{ needs.metadata.outputs.asset_suffix }}.apk"
+        
+      - uses: actions/upload-artifact@v4
+        with: { name: android, path: harmonymusic-*.apk }
+
+  windows:
+    needs: metadata
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, flutter-version: 3.44.1 }
+      - name: Configure public Auth0 client settings
+        shell: pwsh
+        env:
+          AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
+          AUTH0_CLIENT_ID: ${{ secrets.AUTH0_CLIENT_ID }}
+          AUTH0_REDIRECT_SCHEME: ${{ secrets.AUTH0_REDIRECT_SCHEME }}
+          AUTH0_AUDIENCE: ${{ vars.AUTH0_AUDIENCE }}
+        run: |
+          if (!$env:AUTH0_DOMAIN -or !$env:AUTH0_CLIENT_ID -or !$env:AUTH0_REDIRECT_SCHEME -or !$env:AUTH0_AUDIENCE) { throw 'Missing Auth0 configuration' }
+          @("AUTH0_DOMAIN=$env:AUTH0_DOMAIN", "AUTH0_CLIENT_ID=$env:AUTH0_CLIENT_ID", "AUTH0_REDIRECT_SCHEME=$env:AUTH0_REDIRECT_SCHEME", "AUTH0_AUDIENCE=$env:AUTH0_AUDIENCE") | Set-Content .env
+      - run: flutter pub get
+      - shell: pwsh
+        run: Set-Content lib/utils/update_check_flag_file.dart 'const updateCheckFlag = true;'
+      - name: Build and package signed installer
+        shell: pwsh
+        env:
+          KEY_PEM: ${{ secrets.KEY_PEM }}
+          ISSUE_REPORT_ENDPOINT: ${{ secrets.ISSUE_REPORT_ENDPOINT }}
+          RESOLVER_PRODUCTION_BASE_URL: ${{ vars.RESOLVER_PRODUCTION_BASE_URL }}
+        run: |
+          if (!$env:KEY_PEM -or !$env:ISSUE_REPORT_ENDPOINT -or !$env:RESOLVER_PRODUCTION_BASE_URL) { throw 'Missing Windows release configuration' }
+          choco install innosetup -y --no-progress
+          flutter build windows --release --dart-define=ISSUE_REPORT_ENDPOINT="$env:ISSUE_REPORT_ENDPOINT" --dart-define=BUILD_CHANNEL="${{ needs.metadata.outputs.channel }}" --dart-define=BUILD_VERSION="${{ needs.metadata.outputs.version }}" --dart-define=BUILD_SHA="$env:GITHUB_SHA" --dart-define=RESOLVER_PRODUCTION_BASE_URL="$env:RESOLVER_PRODUCTION_BASE_URL"
+          Invoke-WebRequest https://github.com/mtrojnar/osslsigncode/releases/download/2.9/osslsigncode-2.9-windows-x64-mingw.zip -OutFile osslsigncode.zip
+          Expand-Archive osslsigncode.zip osslsigncode
+          [Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($env:KEY_PEM)) | Set-Content key.pem -NoNewline
+          $signer = "$pwd\osslsigncode\bin\osslsigncode.exe"
+          $app = "$pwd\build\windows\x64\runner\Release\harmonymusic.exe"
+          & $signer sign -certs "$pwd\win_cert\cert.pem" -key "$pwd\key.pem" -t http://timestamp.digicert.com -in $app -out "$app.signed"
+          Move-Item "$app.signed" $app -Force
+          & $signer verify -in $app -CAfile "$pwd\win_cert\cert.pem"
+          & iscc "/DAppVersion=${{ needs.metadata.outputs.version }}" "/DOutputBaseFilename=harmonymusic-${{ needs.metadata.outputs.asset_suffix }}" windows/packaging/exe/inno_setup.iss
+          $installer = Get-ChildItem windows/packaging/exe -Filter "harmonymusic-${{ needs.metadata.outputs.asset_suffix }}.exe" | Select-Object -First 1
+          & $signer sign -certs "$pwd\win_cert\cert.pem" -key "$pwd\key.pem" -t http://timestamp.digicert.com -in $installer.FullName -out "$($installer.FullName).signed"
+          Move-Item "$($installer.FullName).signed" $installer.FullName -Force
+          & $signer verify -in $installer.FullName -CAfile "$pwd\win_cert\cert.pem"
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: windows/packaging/exe/harmonymusic-*.exe }
+
+  publish:
+    needs: [metadata, android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: assets, merge-multiple: true }
+      - name: Publish matching two-platform release
+        env: { GH_TOKEN: ${{ github.token }} }
+        run: |
+          if [[ "${{ needs.metadata.outputs.channel }}" == stable ]]; then
+            gh release create "$GITHUB_REF_NAME" assets/* --title "Harmony Music $GITHUB_REF_NAME" --notes "Harmony Music production release $GITHUB_REF_NAME." --latest
+          else
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag -f main-latest "$GITHUB_SHA"
+            git push origin refs/tags/main-latest --force
+            gh release create main-latest assets/* --title 'Main latest candidate' --notes "Rolling Android and Windows candidate.\n\nBuild SHA: $GITHUB_SHA" --prerelease --target "$GITHUB_SHA" || gh release upload main-latest assets/* --clobber
+          fi

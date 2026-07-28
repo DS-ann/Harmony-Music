@@ -34,10 +34,7 @@ void main() {
     });
 
     test('opens Spotify privacy page through platform service', () {
-      expect(
-        source,
-        contains("https://www.spotify.com/account/privacy/"),
-      );
+      expect(source, contains("https://www.spotify.com/account/privacy/"));
       expect(source, contains("Open Spotify data page"));
       expect(source, contains("AppPlatformService.openUrl"));
     });

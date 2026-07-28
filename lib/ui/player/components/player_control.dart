@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:widget_marquee/widget_marquee.dart';
 
 import '../../../app/providers/controller_providers.dart';
+import '../../widgets/shimmer_widgets/basic_container.dart';
 import '../../widgets/toggle_icon_button.dart';
 import '../../widgets/add_to_playlist_btn.dart';
 import '/ui/player/components/animated_play_button.dart';
@@ -25,6 +26,7 @@ class PlayerControlWidget extends ConsumerWidget {
         playerController.isShuffleModeEnabled,
         playerController.isLoopModeEnabled,
         playerController.isQueueLoopModeEnabled,
+        playerController.buttonState,
       ]),
       builder: (context, _) => Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -53,37 +55,51 @@ class PlayerControlWidget extends ConsumerWidget {
                     );
                   },
                   blendMode: BlendMode.dstIn,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Marquee(
-                        delay: const Duration(milliseconds: 300),
-                        duration: const Duration(seconds: 10),
-                        id: "${playerController.currentSong.value}_title",
-                        child: Text(
-                          playerController.currentSong.value != null
-                              ? playerController.currentSong.value!.title
-                              : "NA",
-                          textAlign: TextAlign.start,
-                          style: Theme.of(context).textTheme.labelMedium!,
+                  child: playerController.isCurrentSongLoading
+                      // This item is id-only — its metadata has not resolved
+                      // yet, so there is no title or artist to render. Not a
+                      // buffering state: audio being busy never shimmers here.
+                      ? const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            BasicShimmerContainer(Size(180, 16)),
+                            SizedBox(height: 7),
+                            BasicShimmerContainer(Size(110, 12)),
+                          ],
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Marquee(
+                              delay: const Duration(milliseconds: 300),
+                              duration: const Duration(seconds: 10),
+                              id: "${playerController.currentSong.value}_title",
+                              child: Text(
+                                playerController.currentSong.value != null
+                                    ? playerController.currentSong.value!.title
+                                    : "NA",
+                                textAlign: TextAlign.start,
+                                style: Theme.of(context).textTheme.labelMedium!,
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            Marquee(
+                              delay: const Duration(milliseconds: 300),
+                              duration: const Duration(seconds: 10),
+                              id: "${playerController.currentSong.value}_subtitle",
+                              child: Text(
+                                // artist is nullable: cloud sessions carry ids
+                                // only, so a queue item can legitimately have
+                                // no artist until its metadata resolves.
+                                playerController.currentSong.value?.artist ??
+                                    "",
+                                textAlign: TextAlign.start,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.labelSmall,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      const SizedBox(height: 5),
-                      Marquee(
-                        delay: const Duration(milliseconds: 300),
-                        duration: const Duration(seconds: 10),
-                        id: "${playerController.currentSong.value}_subtitle",
-                        child: Text(
-                          playerController.currentSong.value != null
-                              ? playerController.currentSong.value!.artist!
-                              : "NA",
-                          textAlign: TextAlign.start,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      ),
-                    ],
-                  ),
                 ),
               ),
               const SizedBox(

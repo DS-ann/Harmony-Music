@@ -193,7 +193,7 @@ class AppLocalizationsHr extends AppLocalizations {
   String get discover => 'Discover';
 
   @override
-  String get dismiss => 'Dismiss';
+  String get dismiss => 'Odbaci';
 
   @override
   String get dontShowInfoAgain => 'Don\'t show this info again';
@@ -1221,64 +1221,28 @@ class AppLocalizationsHr extends AppLocalizations {
       'Sigurno sinkronizira biblioteku, postavke i popis preuzetih pjesama.';
 
   @override
-  String get cloudBackupPrompt =>
-      'Želite li sigurnosno kopirati Harmony podatke i sinkronizirati ih između uređaja?';
+  String get cloudDataSync => 'Sinkronizacija podataka u oblaku';
 
   @override
-  String get cloudBackupEnable => 'Uključi backup';
+  String get cloudDataSyncDescription =>
+      'Sinkronizirajte biblioteku, playliste, sviđanja i sigurne postavke između uređaja.';
+
+  @override
+  String get deviceControl => 'Upravljanje uređajem';
+
+  @override
+  String get deviceControlDescription =>
+      'Ovaj prijavljeni uređaj dostupan je vašem Harmony računu.';
+
+  @override
+  String get cloudBackupPrompt =>
+      'Želite li sinkronizirati Harmony biblioteku, playliste, sviđanja i sigurne postavke između uređaja?';
+
+  @override
+  String get cloudBackupEnable => 'Uključi sinkronizaciju podataka';
 
   @override
   String get cloudBackupNotNow => 'Ne sada';
-
-  @override
-  String get cloudBackupNow => 'Sada sigurnosno kopiraj preuzete pjesme';
-
-  @override
-  String get cloudBackupInProgress =>
-      'Izrađuje se sigurnosna kopija preuzetih pjesama…';
-
-  @override
-  String cloudBackupProgress(int completed, int total, int percentage) {
-    return 'Izrađuje se sigurnosna kopija: $completed od $total ($percentage %)';
-  }
-
-  @override
-  String get cloudBackupComplete =>
-      'Sigurnosna kopija preuzetih pjesama je dovršena.';
-
-  @override
-  String get cloudBackupWifiRequired =>
-      'Povežite se na Wi-Fi za sigurnosnu kopiju preuzetih pjesama.';
-
-  @override
-  String get cloudBackupFailed =>
-      'Izrada sigurnosne kopije nije uspjela. Pokušajte ponovno.';
-
-  @override
-  String get cloudBackupAuthenticationRequired =>
-      'Ponovno se prijavite prije sigurnosnog kopiranja preuzetih pjesama.';
-
-  @override
-  String get cloudBackupPermissionDenied =>
-      'Sigurnosno kopiranje u oblak još nije odobreno za ovaj račun.';
-
-  @override
-  String get cloudBackupServiceUnavailable =>
-      'Usluga sigurnosnog kopiranja u oblak trenutačno nije dostupna. Pokušajte kasnije.';
-
-  @override
-  String get cloudBackupNetworkFailure =>
-      'Sigurnosno kopiranje u oblak ne može dosegnuti uslugu. Provjerite vezu.';
-
-  @override
-  String get cloudBackupLowBatteryTitle => 'Baterija je pri kraju';
-
-  @override
-  String get cloudBackupLowBatteryMessage =>
-      'Baterija je ispod 50 %. Izrada sigurnosne kopije preuzetih pjesama može potrošiti mnogo energije.';
-
-  @override
-  String get cloudBackupAnyway => 'Svejedno izradi kopiju';
 
   @override
   String get shareAndroidApp => 'Podijeli Harmony Music';
@@ -1288,10 +1252,95 @@ class AppLocalizationsHr extends AppLocalizations {
       'Podijelite izravnu poveznicu na najnoviji Android APK.';
 
   @override
-  String get retryFailedDownloads => 'Ponovi neuspjela preuzimanja';
+  String get playOnDevice => 'Reproduciraj na uređaju';
 
   @override
-  String retryFailedDownloadsDescription(int count) {
-    return '$count neuspjelih preuzimanja pjesama spremno je za ponovni pokušaj.';
-  }
+  String get noOtherDevices =>
+      'Nema drugih dostupnih prijavljenih Harmony uređaja.';
+
+  @override
+  String get deviceUnavailable => 'Nedostupno';
+
+  @override
+  String get deviceBackground => 'Dostupno u pozadini';
+
+  @override
+  String get deviceOnline => 'Na mreži';
+
+  @override
+  String get handoffRequested => 'Zatražen je prijenos reprodukcije.';
+
+  @override
+  String get deviceControlUnavailable =>
+      'Upravljanje uređajem trenutačno nije dostupno. Pokušajte kasnije.';
+
+  @override
+  String get cloudPlaybackReconnecting => 'Ponovno povezivanje…';
+
+  @override
+  String get tapToLeaveSync => 'Sinkronizirano — dodirni za prekid';
+
+  @override
+  String get debugRefreshAuthToken => 'Osvježi Auth0 token';
+
+  @override
+  String get debugRefreshAuthTokenDescription =>
+      'Samo za debug: tiho zatraži novi token za prijavu.';
+
+  @override
+  String get debugAuthTokenRefreshed => 'Auth0 token je osvježen.';
+
+  @override
+  String get debugAuthTokenRefreshFailed =>
+      'Auth0 token se nije mogao osvježiti. Prijavite se ponovno.';
+
+  @override
+  String get filter => 'Filtar';
+
+  @override
+  String get showDownloadsNotInLibrary =>
+      'Prikaži preuzimanja izvan tvoje biblioteke';
+
+  @override
+  String get includeCachedSongs => 'Uključi predmemorirane pjesme';
+
+  @override
+  String get songsFilteredToLibrary =>
+      'Pjesme prikazuju preuzimanja koja su u tvojoj biblioteci. Nijedno preuzimanje još nije označeno kao voljeno.';
+
+  @override
+  String get showAllDownloads => 'Prikaži sva preuzimanja';
+
+  @override
+  String get downloadNotInLibraryTitle => 'Ova pjesma nije u tvojoj biblioteci';
+
+  @override
+  String get downloadNotInLibraryMessage =>
+      'Pjesme prikazuju preuzimanja koja su u tvojoj biblioteci. Ako je svejedno preuzmeš, ostaje na ovom uređaju, ali se neće pojaviti ondje dok je ne označiš kao voljenu.';
+
+  @override
+  String get likeAndDownload => 'Označi i preuzmi';
+
+  @override
+  String get downloadOnly => 'Samo preuzmi';
+
+  @override
+  String get dontAskAgain => 'Ne pitaj više';
+
+  @override
+  String get existingLibraryTitle => 'Glazba već postoji na ovom uređaju';
+
+  @override
+  String get existingLibraryMessage =>
+      'Ovaj uređaj ima biblioteku koja još nije povezana ni s jednim računom. Dodaj je svom računu ili je zamijeni bibliotekom koja je već na računu. Preuzete datoteke ostaju u oba slučaja.';
+
+  @override
+  String get mergeIntoAccount => 'Dodaj mom računu';
+
+  @override
+  String get replaceWithAccountLibrary => 'Koristi biblioteku računa';
+
+  @override
+  String get sessionExpiredMessage =>
+      'Odjavljen si. Sinkronizacija je pauzirana dok se ponovno ne prijaviš.';
 }

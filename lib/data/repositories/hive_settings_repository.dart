@@ -134,6 +134,48 @@ class HiveSettingsRepository implements SettingsRepository {
   Future<void> setVolume(int value) => _box.put(PrefKeys.volume, value);
 
   @override
+  int getSongCachePurgeVersion() =>
+      _box.get(PrefKeys.songCachePurgeVersion, defaultValue: 0);
+
+  @override
+  Future<void> setSongCachePurgeVersion(int value) =>
+      _box.put(PrefKeys.songCachePurgeVersion, value);
+
+  @override
+  String? getCloudAccountSubject() {
+    final value = _box.get(PrefKeys.cloudAccountSubject)?.toString();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  @override
+  Future<void> setCloudAccountSubject(String value) =>
+      _box.put(PrefKeys.cloudAccountSubject, value);
+
+  @override
+  bool getSongsShowUnlikedDownloads() =>
+      _box.get(PrefKeys.songsShowUnlikedDownloads) ?? false;
+
+  @override
+  Future<void> setSongsShowUnlikedDownloads(bool value) =>
+      _box.put(PrefKeys.songsShowUnlikedDownloads, value);
+
+  @override
+  bool getSongsIncludeCached() =>
+      _box.get(PrefKeys.songsIncludeCached) ?? false;
+
+  @override
+  Future<void> setSongsIncludeCached(bool value) =>
+      _box.put(PrefKeys.songsIncludeCached, value);
+
+  @override
+  bool getUnlikedDownloadNoticeDismissed() =>
+      _box.get(PrefKeys.unlikedDownloadNoticeDismissed) ?? false;
+
+  @override
+  Future<void> setUnlikedDownloadNoticeDismissed(bool value) =>
+      _box.put(PrefKeys.unlikedDownloadNoticeDismissed, value);
+
+  @override
   bool getBottomNavBarEnabled() =>
       _box.get(PrefKeys.isBottomNavBarEnabled) ?? true;
 
@@ -395,6 +437,14 @@ class HiveSettingsRepository implements SettingsRepository {
   @override
   Future<void> setRecentSongId(String songId) =>
       _box.put(PrefKeys.recentSongId, songId);
+
+  @override
+  bool getHasSeenWelcomeScreen() =>
+      _box.get(PrefKeys.hasSeenWelcomeScreen) ?? false;
+
+  @override
+  Future<void> setHasSeenWelcomeScreen(bool value) =>
+      _box.put(PrefKeys.hasSeenWelcomeScreen, value);
 
   @override
   Future<void> seedDefaults(bool updateCheckFlag) async {

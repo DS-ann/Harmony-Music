@@ -19,6 +19,21 @@ class ObservableValue<T> extends ChangeNotifier {
     _controller.add(_value);
   }
 
+  /// Replaces the value even when it compares equal to the current one.
+  ///
+  /// The `==` guard above assumes equality means "nothing to redraw". That is
+  /// false for types whose equality is an identity check rather than a value
+  /// check — `MediaItem` compares by `id` alone, so swapping a resolving
+  /// placeholder for the same song's fully populated metadata is dropped as a
+  /// no-op and the placeholder stays on screen forever. Use this wherever the
+  /// replacement may carry new content under an unchanged identity.
+  void overwrite(T next) {
+    if (identical(_value, next)) return;
+    _value = next;
+    notifyListeners();
+    _controller.add(_value);
+  }
+
   StreamSubscription<T> listen(void Function(T value) listener) =>
       _controller.stream.listen(listener);
 
@@ -43,7 +58,8 @@ class ObservableNullable<T> extends ObservableValue<T?> {
 }
 
 class ObservableList<T> extends ListBase<T> with ChangeNotifier {
-  ObservableList([Iterable<T> values = const []]) : _values = List<T>.from(values);
+  ObservableList([Iterable<T> values = const []])
+    : _values = List<T>.from(values);
 
   final _controller = StreamController<List<T>>.broadcast();
   List<T> _values;
@@ -148,7 +164,8 @@ class ObservableList<T> extends ListBase<T> with ChangeNotifier {
 }
 
 class ObservableMap<K, V> extends MapBase<K, V> with ChangeNotifier {
-  ObservableMap([Map<K, V> values = const {}]) : _values = Map<K, V>.from(values);
+  ObservableMap([Map<K, V> values = const {}])
+    : _values = Map<K, V>.from(values);
 
   final _controller = StreamController<Map<K, V>>.broadcast();
   final Map<K, V> _values;
@@ -169,8 +186,9 @@ class ObservableMap<K, V> extends MapBase<K, V> with ChangeNotifier {
     _notify();
   }
 
-  StreamSubscription<Map<K, V>> listen(void Function(Map<K, V> value) listener) =>
-      _controller.stream.listen(listener);
+  StreamSubscription<Map<K, V>> listen(
+    void Function(Map<K, V> value) listener,
+  ) => _controller.stream.listen(listener);
 
   void _notify() {
     notifyListeners();

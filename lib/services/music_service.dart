@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 
 import '../domain/repositories/settings_repository.dart';
 import '/models/album.dart';
+import '/models/media_Item_builder.dart';
 import '/services/app_contracts.dart';
 import '/services/utils.dart';
 import '../utils/helper.dart';
@@ -42,7 +43,20 @@ class MusicServices implements MusicServiceContract {
     },
   };
 
-  final dio = Dio();
+  /// Dio applies no timeouts unless it is given them, so a socket that stops
+  /// answering leaves the request pending forever rather than failing. Every
+  /// call here is a small JSON request: one that has not answered in seconds is
+  /// not slow, it is gone. A cloud handoff made the cost visible — the audio
+  /// target awaits metadata before it can start, so a hung `player` call left
+  /// the receiving phone on a spinner and a placeholder title with no way out,
+  /// while `NetworkError` (which callers already handle) was never thrown.
+  final dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      sendTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
+    ),
+  );
 
   Future<void> init() async {
     //check visitor id in data base, if not generate one , set lang code
@@ -107,10 +121,16 @@ class MusicServices implements MusicServiceContract {
     }
   }
 
+  /// Retries are bounded with backoff. This used to recurse unconditionally on any
+  /// non-200, so a persistently failing endpoint could spin forever and stall
+  /// whatever awaited it.
+  static const _maxRequestAttempts = 3;
+
   Future<Response> _sendRequest(
     String action,
     Map<dynamic, dynamic> data, {
     additionalParams = "",
+    int attempt = 1,
   }) async {
     //print("$baseUrl$action$fixedParms$additionalParams          data:$data");
     try {
@@ -122,9 +142,15 @@ class MusicServices implements MusicServiceContract {
 
       if (response.statusCode == 200) {
         return response;
-      } else {
-        return _sendRequest(action, data, additionalParams: additionalParams);
       }
+      if (attempt >= _maxRequestAttempts) throw NetworkError();
+      await Future.delayed(Duration(milliseconds: 200 * attempt));
+      return _sendRequest(
+        action,
+        data,
+        additionalParams: additionalParams,
+        attempt: attempt + 1,
+      );
     } on DioException catch (e) {
       printINFO("Error $e");
       throw NetworkError();
@@ -585,6 +611,49 @@ class MusicServices implements MusicServiceContract {
         })
         .whereType<String>()
         .toList();
+  }
+
+  /// Resolves a single video id to a [MediaItem] using exactly one `player`
+  /// request.
+  ///
+  /// [getSongWithId] costs 2-4 sequential round trips because it follows the
+  /// watch-playlist path to build a 25-track radio queue — which is the right
+  /// thing for a deep link, and pure waste when the caller only needs one song's
+  /// title and artwork. Everything needed for that already comes back in
+  /// `videoDetails` on the response below.
+  @override
+  Future<MediaItem?> resolveSongMetadata(String songId) async {
+    final response = (await _sendRequest("player", {
+      ..._context,
+      'videoId': songId,
+    })).data;
+    return _mediaItemFromPlayerResponse(songId, response);
+  }
+
+  MediaItem? _mediaItemFromPlayerResponse(String songId, dynamic response) {
+    final details = response is Map ? response['videoDetails'] : null;
+    if (details is! Map) return null;
+    final title = details['title']?.toString();
+    if (title == null || title.trim().isEmpty) return null;
+    final author = details['author']?.toString();
+    final lengthSeconds = int.tryParse(
+      details['lengthSeconds']?.toString() ?? '',
+    );
+    final thumbnails = nav(response, [
+      'videoDetails',
+      'thumbnail',
+      'thumbnails',
+    ]);
+    return MediaItemBuilder.fromJson({
+      'videoId': songId,
+      'title': title,
+      if (author != null && author.trim().isNotEmpty)
+        'artists': [
+          {'name': author},
+        ],
+      if (lengthSeconds != null) 'duration': lengthSeconds,
+      if (thumbnails is List && thumbnails.isNotEmpty) 'thumbnails': thumbnails,
+    });
   }
 
   ///Specially created for deep-links

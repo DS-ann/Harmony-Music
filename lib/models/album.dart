@@ -38,19 +38,37 @@ class Album {
   final String? year;
   final String thumbnailUrl;
 
-  factory Album.fromJson(Map<dynamic, dynamic> json) => Album(
-    title: json["title"],
-    browseId: json["browseId"],
-    artists: json["artists"] != null
-        ? List<Map<dynamic, dynamic>>.from(json["artists"])
+  factory Album.fromJson(Map<dynamic, dynamic> json) {
+    // Browse/search results and synced entries can carry a null title,
+    // browseId, artists list (or one emptied by parseSongRuns stripping a
+    // leading type token with no real artist behind it), or missing/null
+    // thumbnails. Assigning null straight into these non-null fields throws
+    // "Null is not a subtype of String"; an empty artists list crashes
+    // ContentListItem's `artists[0]` access. Fall back to safe values instead.
+    final artists = json['artists'];
+    final safeArtists = artists is List && artists.isNotEmpty
+        ? List<Map<dynamic, dynamic>>.from(artists)
         : [
             {'name': ''},
-          ],
-    year: json['year'],
-    audioPlaylistId: json['audioPlaylistId'],
-    description: json['description'] ?? json["type"] ?? "Album",
-    thumbnailUrl: Thumbnail(json["thumbnails"][0]["url"]).medium,
-  );
+          ];
+    final thumbnails = json['thumbnails'];
+    final thumbUrl =
+        thumbnails is List && thumbnails.isNotEmpty && thumbnails.first is Map
+        ? thumbnails.first['url']?.toString()
+        : null;
+    return Album(
+      title: json['title']?.toString() ?? '',
+      browseId: json['browseId']?.toString() ?? '',
+      artists: safeArtists,
+      year: json['year']?.toString(),
+      audioPlaylistId: json['audioPlaylistId']?.toString(),
+      description:
+          json['description']?.toString() ??
+          json['type']?.toString() ??
+          'Album',
+      thumbnailUrl: Thumbnail(thumbUrl ?? '').medium,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     "title": title,

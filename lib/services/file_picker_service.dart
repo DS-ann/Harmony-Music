@@ -66,9 +66,7 @@ class FilePickerService {
     );
   }
 
-  static Future<String?> pickLargeFilePath({
-    required List<String> extensions,
-  }) {
+  static Future<String?> pickLargeFilePath({required List<String> extensions}) {
     return _service.pickLargeFilePath(extensions: extensions);
   }
 

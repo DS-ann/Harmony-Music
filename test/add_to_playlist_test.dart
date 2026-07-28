@@ -400,10 +400,7 @@ void main() {
 
         // A local playlist already containing song-1.
         final playlistBox = await Hive.openBox('LibraryPlaylists');
-        await playlistBox.put(
-          playlistId,
-          _localPlaylistJson(playlistId),
-        );
+        await playlistBox.put(playlistId, _localPlaylistJson(playlistId));
         await playlistBox.close();
         final songBox = await Hive.openBox(playlistId);
         await songBox.add(MediaItemBuilder.toJson(_song('song-1')));
@@ -491,10 +488,10 @@ void main() {
 
       expect(result, PlaylistRemoveStatus.removed);
       // Descending so the lower index stays valid: index 2 then index 0.
-      expect(
-        pipedServices.requestedRemovals.map((request) => request.index),
-        [2, 0],
-      );
+      expect(pipedServices.requestedRemovals.map((request) => request.index), [
+        2,
+        0,
+      ]);
       expect(controller.playlistSongIds['piped-a'], {'song-1'});
     });
   });

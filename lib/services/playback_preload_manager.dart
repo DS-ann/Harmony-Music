@@ -360,6 +360,9 @@ class _NoopSongCacheRepository implements SongCacheRepository {
   Future<void> deleteCachedSong(String songId) async {}
 
   @override
+  Future<int> purgeSongsWithoutAlbumId() async => 0;
+
+  @override
   Future<void> deleteStreamCacheEntry(String songId) async {}
 
   @override
