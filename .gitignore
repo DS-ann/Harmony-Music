@@ -61,6 +61,11 @@ app.*.map.json
 /android/app/release
 /android/app/google-services.json
 
+# Local Auth0 configuration. Copy .env.example and fill it in; CI writes its
+# own from repository secrets. Tracking it meant anything secret added here
+# later would publish itself on the next commit.
+/.env
+
 # FVM Version Cache
 .fvm/
 .fvmrc
