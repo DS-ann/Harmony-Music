@@ -33,10 +33,22 @@ def releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
 def releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
 def releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
-def hasReleaseSigning = releaseKeystorePath != null &&
-        releaseKeystorePassword != null &&
-        releaseKeyAlias != null &&
-        releaseKeyPassword != null
+def hasReleaseSigning = [
+        releaseKeystorePath,
+        releaseKeystorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword,
+].every { value -> value != null && !value.trim().isEmpty() }
+def isReleaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.toLowerCase().contains("release")
+}
+
+if (isReleaseTaskRequested && !hasReleaseSigning) {
+    throw new GradleException(
+            "Release signing is not configured. Set ANDROID_KEYSTORE_PATH, " +
+                    "ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD."
+    )
+}
 
 android {
     compileSdkVersion flutter.compileSdkVersion
@@ -103,7 +115,9 @@ android {
 
         release {
             applicationIdSuffix ".prod"
-            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
     namespace 'com.anandnet.harmonymusic'
