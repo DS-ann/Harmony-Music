@@ -112,7 +112,13 @@ jobs:
           path: |
             C:\vcpkg-pinned\installed
             ~\AppData\Local\vcpkg\archives
-          key: vcpkg-2026.06.01-x64-windows-cpprestsdk-openssl-boost-${{ hashFiles('windows/CMakeLists.txt') }}
+          # Deliberately not hashFiles('windows/CMakeLists.txt'): that file
+          # changes for reasons that have nothing to do with which vcpkg ports
+          # are needed (it already busted this cache once, turning an unrelated
+          # one-line fix into another ~13-minute from-scratch vcpkg build). The
+          # pinned tag and port list are spelled out in the key itself — bump
+          # this key by hand if either one ever actually changes.
+          key: vcpkg-2026.06.01-x64-windows-cpprestsdk-openssl-boost-v1
       - name: Install vcpkg dependencies for auth0_flutter
         shell: pwsh
         # windows-latest's preinstalled C:\vcpkg tracks vcpkg's current registry,
