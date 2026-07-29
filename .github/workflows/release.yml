@@ -102,16 +102,43 @@ jobs:
       - run: flutter pub get
       - shell: pwsh
         run: Set-Content lib/utils/update_check_flag_file.dart 'const updateCheckFlag = true;'
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          # ${{ env.* }} is resolved before the runner starts, so it can only see
+          # env vars this workflow set explicitly — not the runner machine's own
+          # environment. `~` is expanded by actions/cache itself once it's
+          # running on the runner, where it correctly means the user profile dir.
+          path: |
+            C:\vcpkg\installed
+            ~\AppData\Local\vcpkg\archives
+          key: vcpkg-x64-windows-cpprestsdk-openssl-boost-${{ hashFiles('windows/CMakeLists.txt') }}
+      - name: Install vcpkg dependencies for auth0_flutter
+        shell: pwsh
+        # windows-latest ships vcpkg preinstalled at C:\vcpkg (classic mode, no
+        # vcpkg.json manifest in this repo), but none of the ports auth0_flutter's
+        # CMakeLists.txt needs are installed by default. This build has only ever
+        # run on a developer machine with these already present locally — CI never
+        # installed them, so `flutter build windows` failed before ever reaching
+        # signing or packaging.
+        run: |
+          & C:\vcpkg\vcpkg.exe install cpprestsdk:x64-windows openssl:x64-windows boost-system:x64-windows boost-date-time:x64-windows boost-regex:x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
       - name: Build and package installer
         shell: pwsh
         env:
           KEY_PEM: ${{ secrets.KEY_PEM }}
           ISSUE_REPORT_ENDPOINT: ${{ secrets.ISSUE_REPORT_ENDPOINT }}
           RESOLVER_PRODUCTION_BASE_URL: ${{ vars.RESOLVER_PRODUCTION_BASE_URL }}
+          VCPKG_ROOT: C:\vcpkg
         run: |
           if (!$env:ISSUE_REPORT_ENDPOINT -or !$env:RESOLVER_PRODUCTION_BASE_URL) { throw 'Missing Windows release configuration' }
           choco install innosetup -y --no-progress
           flutter build windows --release --dart-define=ISSUE_REPORT_ENDPOINT="$env:ISSUE_REPORT_ENDPOINT" --dart-define=BUILD_CHANNEL="${{ needs.metadata.outputs.channel }}" --dart-define=BUILD_VERSION="${{ needs.metadata.outputs.version }}" --dart-define=BUILD_SHA="$env:GITHUB_SHA" --dart-define=RESOLVER_PRODUCTION_BASE_URL="$env:RESOLVER_PRODUCTION_BASE_URL"
+          # flutter build windows returning non-zero doesn't throw in PowerShell by
+          # default, so a build failure here used to be silently swallowed and only
+          # surfaced later as a confusing packaging error once iscc found no exe.
+          if ($LASTEXITCODE -ne 0) { throw "flutter build windows failed with exit code $LASTEXITCODE" }
           $app = "$pwd\build\windows\x64\runner\Release\harmonymusic.exe"
 
           # No KEY_PEM: ship unsigned rather than fail the release. win_cert/cert.pem
