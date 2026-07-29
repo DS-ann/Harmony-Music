@@ -110,19 +110,32 @@ jobs:
           # environment. `~` is expanded by actions/cache itself once it's
           # running on the runner, where it correctly means the user profile dir.
           path: |
-            C:\vcpkg\installed
+            C:\vcpkg-pinned\installed
             ~\AppData\Local\vcpkg\archives
-          key: vcpkg-x64-windows-cpprestsdk-openssl-boost-${{ hashFiles('windows/CMakeLists.txt') }}
+          key: vcpkg-2026.06.01-x64-windows-cpprestsdk-openssl-boost-${{ hashFiles('windows/CMakeLists.txt') }}
       - name: Install vcpkg dependencies for auth0_flutter
         shell: pwsh
-        # windows-latest ships vcpkg preinstalled at C:\vcpkg (classic mode, no
-        # vcpkg.json manifest in this repo), but none of the ports auth0_flutter's
-        # CMakeLists.txt needs are installed by default. This build has only ever
-        # run on a developer machine with these already present locally — CI never
-        # installed them, so `flutter build windows` failed before ever reaching
-        # signing or packaging.
+        # windows-latest's preinstalled C:\vcpkg tracks vcpkg's current registry,
+        # which removed the cpprestsdk port entirely in release 2026.06.24 —
+        # confirmed via the GitHub API: ports/cpprestsdk exists at tag 2026.06.01,
+        # 404s at 2026.06.24. auth0_flutter's Windows CMakeLists.txt still needs
+        # it, so this clones that last-known-good tag instead of using the
+        # preinstalled copy. (This build has only ever run on a developer
+        # machine with an older vcpkg checkout already present locally — CI
+        # never installed anything, so 'flutter build windows' failed before
+        # ever reaching signing or packaging.)
         run: |
-          & C:\vcpkg\vcpkg.exe install cpprestsdk:x64-windows openssl:x64-windows boost-system:x64-windows boost-date-time:x64-windows boost-regex:x64-windows
+          # Checking for vcpkg.exe specifically, not just the directory: the
+          # cache step above only restores the 'installed' subfolder, so a
+          # cache hit alone creates C:\vcpkg-pinned without vcpkg.exe ever
+          # being cloned into it.
+          if (!(Test-Path C:\vcpkg-pinned\vcpkg.exe)) {
+            git clone --depth 1 --branch 2026.06.01 https://github.com/microsoft/vcpkg.git C:\vcpkg-pinned
+            if ($LASTEXITCODE -ne 0) { throw "git clone vcpkg failed with exit code $LASTEXITCODE" }
+            & C:\vcpkg-pinned\bootstrap-vcpkg.bat -disableMetrics
+            if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed with exit code $LASTEXITCODE" }
+          }
+          & C:\vcpkg-pinned\vcpkg.exe install cpprestsdk:x64-windows openssl:x64-windows boost-system:x64-windows boost-date-time:x64-windows boost-regex:x64-windows
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
       - name: Build and package installer
         shell: pwsh
@@ -130,7 +143,7 @@ jobs:
           KEY_PEM: ${{ secrets.KEY_PEM }}
           ISSUE_REPORT_ENDPOINT: ${{ secrets.ISSUE_REPORT_ENDPOINT }}
           RESOLVER_PRODUCTION_BASE_URL: ${{ vars.RESOLVER_PRODUCTION_BASE_URL }}
-          VCPKG_ROOT: C:\vcpkg
+          VCPKG_ROOT: C:\vcpkg-pinned
         run: |
           if (!$env:ISSUE_REPORT_ENDPOINT -or !$env:RESOLVER_PRODUCTION_BASE_URL) { throw 'Missing Windows release configuration' }
           choco install innosetup -y --no-progress
