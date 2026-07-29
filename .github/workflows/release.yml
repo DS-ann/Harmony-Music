@@ -102,29 +102,43 @@ jobs:
       - run: flutter pub get
       - shell: pwsh
         run: Set-Content lib/utils/update_check_flag_file.dart 'const updateCheckFlag = true;'
-      - name: Build and package signed installer
+      - name: Build and package installer
         shell: pwsh
         env:
           KEY_PEM: ${{ secrets.KEY_PEM }}
           ISSUE_REPORT_ENDPOINT: ${{ secrets.ISSUE_REPORT_ENDPOINT }}
           RESOLVER_PRODUCTION_BASE_URL: ${{ vars.RESOLVER_PRODUCTION_BASE_URL }}
         run: |
-          if (!$env:KEY_PEM -or !$env:ISSUE_REPORT_ENDPOINT -or !$env:RESOLVER_PRODUCTION_BASE_URL) { throw 'Missing Windows release configuration' }
+          if (!$env:ISSUE_REPORT_ENDPOINT -or !$env:RESOLVER_PRODUCTION_BASE_URL) { throw 'Missing Windows release configuration' }
           choco install innosetup -y --no-progress
           flutter build windows --release --dart-define=ISSUE_REPORT_ENDPOINT="$env:ISSUE_REPORT_ENDPOINT" --dart-define=BUILD_CHANNEL="${{ needs.metadata.outputs.channel }}" --dart-define=BUILD_VERSION="${{ needs.metadata.outputs.version }}" --dart-define=BUILD_SHA="$env:GITHUB_SHA" --dart-define=RESOLVER_PRODUCTION_BASE_URL="$env:RESOLVER_PRODUCTION_BASE_URL"
-          Invoke-WebRequest https://github.com/mtrojnar/osslsigncode/releases/download/2.9/osslsigncode-2.9-windows-x64-mingw.zip -OutFile osslsigncode.zip
-          Expand-Archive osslsigncode.zip osslsigncode
-          [Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($env:KEY_PEM)) | Set-Content key.pem -NoNewline
-          $signer = "$pwd\osslsigncode\bin\osslsigncode.exe"
           $app = "$pwd\build\windows\x64\runner\Release\harmonymusic.exe"
-          & $signer sign -certs "$pwd\win_cert\cert.pem" -key "$pwd\key.pem" -t http://timestamp.digicert.com -in $app -out "$app.signed"
-          Move-Item "$app.signed" $app -Force
-          & $signer verify -in $app -CAfile "$pwd\win_cert\cert.pem"
+
+          # No KEY_PEM: ship unsigned rather than fail the release. win_cert/cert.pem
+          # is a self-signed leftover from the upstream project anyway — it was never
+          # trusted by Windows, so signing with it bought no real SmartScreen benefit
+          # over shipping unsigned. Revisit once a real CA-issued cert exists.
+          if ($env:KEY_PEM) {
+            Invoke-WebRequest https://github.com/mtrojnar/osslsigncode/releases/download/2.9/osslsigncode-2.9-windows-x64-mingw.zip -OutFile osslsigncode.zip
+            Expand-Archive osslsigncode.zip osslsigncode
+            [Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($env:KEY_PEM)) | Set-Content key.pem -NoNewline
+            $signer = "$pwd\osslsigncode\bin\osslsigncode.exe"
+            & $signer sign -certs "$pwd\win_cert\cert.pem" -key "$pwd\key.pem" -t http://timestamp.digicert.com -in $app -out "$app.signed"
+            Move-Item "$app.signed" $app -Force
+            & $signer verify -in $app -CAfile "$pwd\win_cert\cert.pem"
+          } else {
+            Write-Host "KEY_PEM not set — shipping an unsigned Windows build."
+          }
+
           & iscc "/DAppVersion=${{ needs.metadata.outputs.version }}" "/DOutputBaseFilename=harmonymusic-${{ needs.metadata.outputs.asset_suffix }}" windows/packaging/exe/inno_setup.iss
           $installer = Get-ChildItem windows/packaging/exe -Filter "harmonymusic-${{ needs.metadata.outputs.asset_suffix }}.exe" | Select-Object -First 1
-          & $signer sign -certs "$pwd\win_cert\cert.pem" -key "$pwd\key.pem" -t http://timestamp.digicert.com -in $installer.FullName -out "$($installer.FullName).signed"
-          Move-Item "$($installer.FullName).signed" $installer.FullName -Force
-          & $signer verify -in $installer.FullName -CAfile "$pwd\win_cert\cert.pem"
+
+          if ($env:KEY_PEM) {
+            $signer = "$pwd\osslsigncode\bin\osslsigncode.exe"
+            & $signer sign -certs "$pwd\win_cert\cert.pem" -key "$pwd\key.pem" -t http://timestamp.digicert.com -in $installer.FullName -out "$($installer.FullName).signed"
+            Move-Item "$($installer.FullName).signed" $installer.FullName -Force
+            & $signer verify -in $installer.FullName -CAfile "$pwd\win_cert\cert.pem"
+          }
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: windows/packaging/exe/harmonymusic-*.exe }
 
