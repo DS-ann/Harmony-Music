@@ -135,7 +135,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { path: assets, merge-multiple: true }
       - name: Publish matching two-platform release
-        env: { GH_TOKEN: ${{ github.token }} }
+        env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           if [[ "${{ needs.metadata.outputs.channel }}" == stable ]]; then
             gh release create "$GITHUB_REF_NAME" assets/* --title "Harmony Music $GITHUB_REF_NAME" --notes "Harmony Music production release $GITHUB_REF_NAME." --latest
