@@ -198,16 +198,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { path: assets, merge-multiple: true }
+        # Deliberately not 'assets': the repo has its own top-level assets/
+        # directory (the Flutter app's icons), and since this job now checks
+        # the repo out, downloading into that path made 'assets/*' glob
+        # assets/icons/ too — which gh tried to upload as a release asset and
+        # died on ("read assets/icons: is a directory").
+        with: { path: release-assets, merge-multiple: true }
       - name: Publish matching two-platform release
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           if [[ "${{ needs.metadata.outputs.channel }}" == stable ]]; then
-            gh release create "$GITHUB_REF_NAME" assets/* --title "Harmony Music $GITHUB_REF_NAME" --notes "Harmony Music production release $GITHUB_REF_NAME." --latest
+            gh release create "$GITHUB_REF_NAME" release-assets/* --title "Harmony Music $GITHUB_REF_NAME" --notes "Harmony Music production release $GITHUB_REF_NAME." --latest
           else
             git config user.name github-actions[bot]
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git tag -f main-latest "$GITHUB_SHA"
             git push origin refs/tags/main-latest --force
-            gh release create main-latest assets/* --title 'Main latest candidate' --notes "Rolling Android and Windows candidate.\n\nBuild SHA: $GITHUB_SHA" --prerelease --target "$GITHUB_SHA" || gh release upload main-latest assets/* --clobber
+            gh release create main-latest release-assets/* --title 'Main latest candidate' --notes "Rolling Android and Windows candidate.\n\nBuild SHA: $GITHUB_SHA" --prerelease --target "$GITHUB_SHA" || gh release upload main-latest release-assets/* --clobber
           fi
