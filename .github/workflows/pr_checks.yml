@@ -30,6 +30,13 @@ jobs:
       - name: Install packages
         run: flutter pub get
 
+      - name: Create .env
+        # pubspec.yaml declares .env as an asset, so analyze/test fail if it
+        # doesn't exist. It's git-ignored (a per-developer/CI build asset, not
+        # source), so a checkout no longer provides one. Placeholder values are
+        # fine here: analyze and test never need real Auth0 credentials.
+        run: cp .env.example .env
+
       - name: Analyze
         run: flutter analyze
 
