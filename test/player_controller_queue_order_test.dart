@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harmonymusic/models/media_Item_builder.dart';
 import 'package:harmonymusic/ui/player/player_controller.dart';
 
 void main() {
@@ -211,6 +212,11 @@ void main() {
         readyStartBlock,
         contains('_isSourceStartPosition(playbackState.updatePosition)'),
       );
+      expect(readyStartBlock, contains('_pendingSourceTransitionObserved'));
+      expect(
+        playerStateBlock,
+        contains('processingState != AudioProcessingState.ready'),
+      );
       expect(
         playerStateBlock,
         contains('_setButtonState(PlayButtonState.loading)'),
@@ -220,6 +226,26 @@ void main() {
         bufferedBlock,
         contains('_setButtonState(PlayButtonState.playing)'),
       );
+    });
+
+    test('restored paused sessions clear the source-start loading state', () {
+      final playerStateBlock = _methodBlock(
+        source,
+        '_listenForChangesInPlayerState',
+      );
+      final restoredReadyBlock = _methodBlock(
+        source,
+        '_isReadyPausedPendingSource',
+      );
+
+      expect(
+        playerStateBlock,
+        contains('_isReadyPausedPendingSource(playerState)'),
+      );
+      expect(restoredReadyBlock, contains('_pendingSourceTransitionObserved'));
+      expect(restoredReadyBlock, contains('AudioProcessingState.ready'));
+      expect(restoredReadyBlock, contains('!playbackState.playing'));
+      expect(restoredReadyBlock, isNot(contains('_isSourceStartPosition')));
     });
 
     test('media item listener only clears lyrics when song changes', () {
@@ -285,8 +311,10 @@ void main() {
     test('same-song replay preserves visible lyrics state', () {
       final block = _methodBlock(source, '_listenForChangesInDuration');
       final clearIndex = block.indexOf('_clearLyricsForSongChange();');
+      // `overwrite`, not `value =`: MediaItem equality is id-only, so a plain
+      // assignment silently drops resolved metadata replacing a placeholder.
       final currentSongUpdateIndex = block.indexOf(
-        'currentSong.value = mediaItem;',
+        'currentSong.overwrite(mediaItem);',
       );
 
       expect(clearIndex, isNot(-1));
@@ -408,6 +436,42 @@ void main() {
         );
       },
     );
+
+    test('resolving cloud placeholders keep the mini-player visible', () {
+      final placeholder = MediaItemBuilder.placeholder('cloud-song-id');
+
+      expect(PlayerController.isDisplayableSong(placeholder), isTrue);
+      expect(
+        PlayerController.isDisplayableSong(
+          const MediaItem(id: '', title: '', playable: true),
+        ),
+        isFalse,
+      );
+    });
+
+    test('desktop miniplayer keeps previous enabled at queue index zero', () {
+      final miniPlayerSource = File(
+        'lib/ui/player/components/mini_player.dart',
+      ).readAsStringSync();
+      expect(
+        miniPlayerSource,
+        matches(
+          RegExp(
+            r'onTap:\s+playerController\s*\.currentSong\s*\.value\s*==\s*null'
+            r'\s+\? null\s+: playerController\.requestPrev',
+          ),
+        ),
+      );
+      expect(
+        miniPlayerSource,
+        isNot(
+          contains(
+            'playerController.currentQueue.first.id ==\n'
+            '                                                        playerController',
+          ),
+        ),
+      );
+    });
 
     test('miniplayer height is set before auto-opening player panel', () {
       final block = _methodBlock(source, '_playerPanelCheck');

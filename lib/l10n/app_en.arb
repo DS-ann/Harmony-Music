@@ -385,21 +385,42 @@
   "resolverPlaybackFailed": "This song could not be loaded from either playback source. Check your connection and try again.",
   "cloudBackup": "Harmony Cloud backup",
   "cloudBackupDescription": "Securely sync your library, settings and downloaded-song inventory.",
-  "cloudBackupPrompt": "Keep your Harmony data backed up and synchronized across devices?",
-  "cloudBackupEnable": "Enable backup",
+  "cloudDataSync": "Cloud data sync",
+  "cloudDataSyncDescription": "Sync your library, playlists, likes and safe settings across devices.",
+  "deviceControl": "Device control",
+  "deviceControlDescription": "This signed-in device is available to your Harmony account.",
+  "cloudBackupPrompt": "Synchronize your Harmony library, playlists, likes and safe settings across devices?",
+  "cloudBackupEnable": "Enable data sync",
   "cloudBackupNotNow": "Not now",
-  "cloudBackupNow": "Back up downloaded songs now",
-  "cloudBackupInProgress": "Backing up downloaded songs…",
-  "cloudBackupComplete": "Downloaded-song backup finished.",
-  "cloudBackupWifiRequired": "Connect to Wi-Fi to back up downloaded songs.",
-  "cloudBackupFailed": "Cloud backup failed. Try again.",
-  "cloudBackupAuthenticationRequired": "Sign in again before backing up downloaded songs.",
-  "cloudBackupPermissionDenied": "Cloud backup is not authorized for this account yet.",
-  "cloudBackupServiceUnavailable": "Cloud backup service is unavailable. Try again later.",
-  "cloudBackupNetworkFailure": "Cloud backup could not reach the service. Check your connection.",
-  "cloudBackupLowBatteryTitle": "Battery is low",
-  "cloudBackupLowBatteryMessage": "Your battery is below 50%. Backing up downloaded songs may use significant power.",
-  "cloudBackupAnyway": "Back up anyway",
   "shareAndroidApp": "Share Harmony Music",
   "shareAndroidAppDescription": "Share a direct link to the latest Android APK."
+  ,"playOnDevice": "Play on a device"
+  ,"noOtherDevices": "No other signed-in Harmony devices are available."
+  ,"deviceUnavailable": "Unavailable"
+  ,"deviceBackground": "Available in background"
+  ,"deviceOnline": "Online"
+  ,"handoffRequested": "Playback handoff requested."
+  ,"deviceControlUnavailable": "Device control is unavailable. Try again later."
+  ,"cloudPlaybackReconnecting": "Reconnecting…"
+  ,"tapToLeaveSync": "Synced — tap to leave"
+  ,"debugRefreshAuthToken": "Refresh Auth0 token"
+  ,"debugRefreshAuthTokenDescription": "Debug only: silently request a fresh sign-in token."
+  ,"debugAuthTokenRefreshed": "Auth0 token refreshed."
+  ,"debugAuthTokenRefreshFailed": "Could not refresh the Auth0 token. Sign in again."
+  ,"filter": "Filter"
+  ,"showDownloadsNotInLibrary": "Show downloads not in your library"
+  ,"includeCachedSongs": "Include cached songs"
+  ,"songsFilteredToLibrary": "Songs shows downloads that are in your library. None of your downloads are liked yet."
+  ,"showAllDownloads": "Show all downloads"
+  ,"downloadNotInLibraryTitle": "This song is not in your library"
+  ,"downloadNotInLibraryMessage": "Songs shows downloads that are in your library. Download it anyway and it stays on this device, but it will not appear there until you like it."
+  ,"likeAndDownload": "Like and download"
+  ,"downloadOnly": "Download only"
+  ,"dontAskAgain": "Don't ask again"
+  ,"existingLibraryTitle": "Music already on this device"
+  ,"existingLibraryMessage": "This device has a library that is not linked to any account yet. Add it to your account, or replace it with the library already in your account. Downloaded files are kept either way."
+  ,"mergeIntoAccount": "Add to my account"
+  ,"replaceWithAccountLibrary": "Use my account's library"
+  ,"sessionExpiredMessage": "You have been signed out. Sync is paused until you sign back in."
+  ,"dismiss": "Dismiss"
 }

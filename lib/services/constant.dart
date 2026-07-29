@@ -92,6 +92,18 @@ class PrefKeys {
   static const String cloudDeviceId = 'cloudDeviceId';
   static const String cloudCheckpoint = 'cloudCheckpoint';
   static const String cloudDeviceSequence = 'cloudDeviceSequence';
+  static const String cloudSyncSchemaVersion = 'cloudSyncSchemaVersion';
+  static const String songCachePurgeVersion = 'songCachePurgeVersion';
+
+  /// Auth0 subject of the account this device's synced library belongs to.
+  /// Outlives the session on purpose: it is what tells an account switch apart
+  /// from a sign-out, and what the Songs filter scopes to while signed out.
+  static const String cloudAccountSubject = 'cloudAccountSubject';
+  static const String songsShowUnlikedDownloads = 'songsShowUnlikedDownloads';
+  static const String songsIncludeCached = 'songsIncludeCached';
+  static const String unlikedDownloadNoticeDismissed =
+      'unlikedDownloadNoticeDismissed';
+  static const String hasSeenWelcomeScreen = 'hasSeenWelcomeScreen';
 }
 
 enum PlaybackMode { classic, preloaded }
@@ -118,4 +130,15 @@ class LogTags {
   static const String backup = 'Backup';
   static const String preload = 'Preload';
   static const String listenTogether = 'ListenTogether';
+
+  /// Library/settings sync. Rejections are server-side policy decisions
+  /// (paused device, replayed sequence, invalid payload) that are invisible
+  /// from the UI, so they have to be traceable in the log.
+  static const String cloudSync = 'CloudSync';
+
+  /// Cross-device playback. This path used to record only failures, so a
+  /// session that quietly delivered nothing looked identical in the log to one
+  /// that was never attempted — which is exactly the state that is hard to
+  /// diagnose. It now leaves breadcrumbs on the way through.
+  static const String cloudPlayback = 'CloudPlayback';
 }

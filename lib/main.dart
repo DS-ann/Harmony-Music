@@ -4,13 +4,18 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:just_audio_media_kit/just_audio_media_kit.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:smtc_windows/smtc_windows.dart';
 
 import 'app/providers/app_service_registration.dart';
 import 'app/providers/app_locale_provider.dart';
+import 'app/providers/auth_providers.dart';
 import 'app/providers/controller_providers.dart';
 import 'app/providers/repository_providers.dart';
 import 'app/providers/service_providers.dart';
@@ -37,11 +42,30 @@ Future<void> main() async {
   await runZonedGuarded<Future<void>>(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      FirebaseMessaging.onBackgroundMessage(cloudFcmBackgroundHandler);
       await dotenv.load(fileName: '.env', isOptional: true);
       await CrashDiagnosticsService.instance.init();
       _installCrashDiagnosticsHandlers();
       _configureFlutterImageCache();
       await initHive();
+      if (RuntimePlatform.isWindows || RuntimePlatform.isLinux) {
+        // just_audio_media_kit is a Dart platform implementation, so it must
+        // be registered before the first AudioPlayer is created. Without this
+        // Windows playback can advance without creating an output/mixer session.
+        JustAudioMediaKit.registerWith();
+      }
+      if (RuntimePlatform.isWindows) {
+        try {
+          await SMTCWindows.initialize();
+        } catch (error, stackTrace) {
+          CrashDiagnosticsService.instance.record(
+            'windows-smtc',
+            'Failed to initialize Windows media controls',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+      }
       final bootstrapContainer = ProviderContainer();
       await setAppInitPrefs(
         bootstrapContainer.read(settingsRepositoryProvider),
@@ -76,7 +100,9 @@ Future<void> main() async {
         ],
       );
       registerAppServices(appProviderContainer);
-      WidgetsBinding.instance.addObserver(LifecycleHandler(audioHandler));
+      WidgetsBinding.instance.addObserver(
+        LifecycleHandler(audioHandler, appProviderContainer),
+      );
       runApp(
         UncontrolledProviderScope(
           container: appProviderContainer,
@@ -88,6 +114,14 @@ Future<void> main() async {
       CrashDiagnosticsService.instance.recordZoneError(error, stackTrace);
     },
   );
+}
+
+@pragma('vm:entry-point')
+Future<void> cloudFcmBackgroundHandler(RemoteMessage message) async {
+  // FCM carries only a command id. The running app's CloudPlaybackReceiver
+  // fetches and acknowledges the authenticated command; no media data is read
+  // from the push payload.
+  await Firebase.initializeApp();
 }
 
 void _installCrashDiagnosticsHandlers() {
@@ -127,6 +161,10 @@ class MyApp extends ConsumerWidget {
     }
     final themeController = ref.watch(themeControllerProvider);
     final appLocaleController = ref.watch(appLocaleControllerProvider);
+    final authController = ref.watch(authControllerProvider);
+    if (authController.isAuthenticated) {
+      unawaited(ref.read(cloudPlaybackReceiverProvider).start());
+    }
     final router = ref.watch(appRouterProvider);
     return MaterialApp.router(
       title: 'Harmony Music',
@@ -204,9 +242,10 @@ Future<void> setAppInitPrefs(SettingsRepository settingsRepository) async {
 }
 
 class LifecycleHandler extends WidgetsBindingObserver {
-  LifecycleHandler(this._audioHandler);
+  LifecycleHandler(this._audioHandler, this._container);
 
   final AudioHandler _audioHandler;
+  final ProviderContainer _container;
 
   @override
   Future<void> didChangeAppLifecycleState(AppLifecycleState state) async {
@@ -218,6 +257,9 @@ class LifecycleHandler extends WidgetsBindingObserver {
     );
     if (state == AppLifecycleState.resumed) {
       unawaited(_audioHandler.customAction('warmResolverConnection'));
+      // Catch up on what other devices changed while this one was away, so
+      // coming back to the app does not show a stale library.
+      unawaited(_container.read(authControllerProvider).onAppResumed());
       // SystemUiModeScope owns edge-to-edge / immersive restoration for the
       // currently mounted app surfaces.
     } else if (state == AppLifecycleState.paused) {

@@ -43,9 +43,17 @@ class _SystemUiModeScopeState extends ConsumerState<SystemUiModeScope>
     with WidgetsBindingObserver {
   final Object _owner = Object();
 
+  /// Held directly rather than read through `ref` in [dispose].
+  ///
+  /// `ref` is backed by BuildContext, which is already unsafe by the time the
+  /// element is being unmounted — reading it there throws
+  /// "Using ref when a widget is about to or has been unmounted is unsafe".
+  late final SystemUiModeService _service;
+
   @override
   void initState() {
     super.initState();
+    _service = ref.read(systemUiModeServiceProvider);
     WidgetsBinding.instance.addObserver(this);
     _syncRequest();
   }
@@ -93,7 +101,7 @@ class _SystemUiModeScopeState extends ConsumerState<SystemUiModeScope>
 
   @override
   void dispose() {
-    ref.read(systemUiModeServiceProvider).unregisterRequest(_owner);
+    _service.unregisterRequest(_owner);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

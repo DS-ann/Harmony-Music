@@ -10,6 +10,7 @@ import '../../models/media_Item_builder.dart';
 import '../../utils/runtime_platform.dart';
 import '../../utils/insets.dart';
 import 'image_widget.dart';
+import 'shimmer_widgets/basic_container.dart';
 import 'snackbar.dart';
 import 'song_info_bottom_sheet.dart';
 
@@ -73,18 +74,26 @@ class UpNextQueue extends ConsumerWidget {
               );
               final isCurrentSong =
                   playerController.currentSongIndex.value == realIndex;
+              // A row we only know the id of yet. Removing or reordering it
+              // would act on a song the user cannot even see, so those gestures
+              // stay disabled until its metadata lands.
+              final isResolving = MediaItemBuilder.isResolving(song);
               return Material(
                 key: Key('queue-row-${song.id}-$realIndex'),
                 child: Dismissible(
                   key: Key('queue-dismiss-${song.id}-$realIndex'),
-                  direction: DismissDirection.horizontal,
+                  direction: isResolving
+                      ? DismissDirection.none
+                      : DismissDirection.horizontal,
                   confirmDismiss: (direction) async =>
                       playerController.currentSongIndex.value != realIndex,
                   onDismissed: (direction) {
                     unawaited(playerController.removeFromQueue(song));
                   },
                   child: ListTile(
-                    onTap: () => playerController.requestSeekByIndex(realIndex),
+                    onTap: isResolving
+                        ? null
+                        : () => playerController.requestSeekByIndex(realIndex),
                     onLongPress: () async {
                       await showModalBottomSheet(
                         constraints: const BoxConstraints(maxWidth: 500),
@@ -138,33 +147,47 @@ class UpNextQueue extends ConsumerWidget {
                         ImageWidget(size: 50, song: song),
                       ],
                     ),
-                    title: Marquee(
-                      delay: const Duration(milliseconds: 300),
-                      duration: const Duration(seconds: 5),
-                      id: "queue${song.title.hashCode}",
-                      child: Text(
-                        song.title,
-                        maxLines: 1,
-                        style: Theme.of(
-                          homeScaffoldContext,
-                        ).textTheme.titleMedium,
-                      ),
-                    ),
-                    subtitle: Text(
-                      "${song.artist}",
-                      maxLines: 1,
-                      style: isCurrentSong
-                          ? Theme.of(
-                              homeScaffoldContext,
-                            ).textTheme.titleSmall!.copyWith(
-                              color: Theme.of(homeScaffoldContext)
-                                  .textTheme
-                                  .titleMedium!
-                                  .color!
-                                  .withValues(alpha: 0.35),
-                            )
-                          : Theme.of(homeScaffoldContext).textTheme.titleSmall,
-                    ),
+                    title: isResolving
+                        ? const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 4),
+                            child: BasicShimmerContainer(Size(160, 14)),
+                          )
+                        : Marquee(
+                            delay: const Duration(milliseconds: 300),
+                            duration: const Duration(seconds: 5),
+                            id: "queue${song.title.hashCode}",
+                            child: Text(
+                              song.title,
+                              maxLines: 1,
+                              style: Theme.of(
+                                homeScaffoldContext,
+                              ).textTheme.titleMedium,
+                            ),
+                          ),
+                    subtitle: isResolving
+                        ? const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 4),
+                            child: BasicShimmerContainer(Size(90, 10)),
+                          )
+                        : Text(
+                            // Nullable: never interpolate, or the row literally
+                            // renders the text "null".
+                            song.artist ?? "",
+                            maxLines: 1,
+                            style: isCurrentSong
+                                ? Theme.of(
+                                    homeScaffoldContext,
+                                  ).textTheme.titleSmall!.copyWith(
+                                    color: Theme.of(homeScaffoldContext)
+                                        .textTheme
+                                        .titleMedium!
+                                        .color!
+                                        .withValues(alpha: 0.35),
+                                  )
+                                : Theme.of(
+                                    homeScaffoldContext,
+                                  ).textTheme.titleSmall,
+                          ),
                     trailing: ReorderableDragStartListener(
                       enabled: !RuntimePlatform.isDesktop,
                       index: index,

@@ -10,6 +10,8 @@ import 'package:path_provider/path_provider.dart';
 import '../app/navigation/app_navigator.dart';
 import '../domain/repositories/download_repository.dart';
 import '../domain/repositories/settings_repository.dart';
+import 'resolver/resolver_client.dart';
+import 'resolver/resolver_configuration.dart';
 import '../utils/runtime_platform.dart';
 import '../utils/observable_state.dart';
 import '/services/constant.dart';
@@ -26,10 +28,15 @@ import '../ui/screens/Library/library_controller.dart';
 //import '../models/thumbnail.dart' as th;
 
 class Downloader extends ChangeNotifier implements DownloaderContract {
-  Downloader(this._downloadRepository, this._settingsRepository);
+  Downloader(
+    this._downloadRepository,
+    this._settingsRepository,
+    this._resolverClient,
+  );
 
   final DownloadRepository _downloadRepository;
   final SettingsRepository _settingsRepository;
+  final ResolverClient _resolverClient;
 
   final _dio = Dio(
     BaseOptions(
@@ -55,6 +62,7 @@ class Downloader extends ChangeNotifier implements DownloaderContract {
   static const _thumbnailDownloadTimeout = Duration(seconds: 20);
   static const _audioDownloadMaxAttempts = 3;
   static const _playlistDownloadDelay = Duration(seconds: 1);
+  static const _resolverPrefetchTimeout = Duration(seconds: 5);
 
   ObservableList<MediaItem> songQueue = ObservableList();
 
@@ -235,6 +243,7 @@ class Downloader extends ChangeNotifier implements DownloaderContract {
     final stopwatch = Stopwatch()..start();
     final downloadingFormat = _settingsRepository.getDownloadingFormat();
 
+    await _requestResolverPrefetch(song, traceId);
     _setPhase("resolvingStream", "Resolving stream", song, traceId);
     final playerResponse = await StreamProvider.fetch(
       song.id,
@@ -462,6 +471,30 @@ class Downloader extends ChangeNotifier implements DownloaderContract {
 
     if (lastDioError != null) {
       throw lastDioError;
+    }
+  }
+
+  Future<void> _requestResolverPrefetch(MediaItem song, String traceId) async {
+    final configuration = ResolverConfiguration.load(_settingsRepository);
+    final baseUrl = configuration.baseUrl;
+    if (!configuration.enabled || baseUrl == null) return;
+
+    _setPhase("requestingResolver", "Requesting Resolver", song, traceId);
+    try {
+      await _resolverClient
+          .prefetch(baseUrl, [song.id])
+          .timeout(_resolverPrefetchTimeout);
+      printINFO(
+        "[$traceId] Requested Resolver prefetch for ${song.id}",
+        tag: LogTags.downloader,
+      );
+    } catch (error) {
+      // Resolver preparation improves later playback but never blocks the
+      // established local downloader.
+      printWarning(
+        "[$traceId] Resolver prefetch unavailable; continuing local download: $error",
+        tag: LogTags.downloader,
+      );
     }
   }
 

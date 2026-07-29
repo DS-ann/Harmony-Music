@@ -61,20 +61,20 @@ class BackupManifest {
   final Map<String, String> audioEntries;
 
   Map<String, dynamic> toJson() => {
-        'formatVersion': formatVersion,
-        'createdAt': createdAt,
-        'source': {
-          'packageName': packageName,
-          'appVersion': appVersion,
-          'buildNumber': buildNumber,
-          'platform': platform,
-        },
-        'sourceSupportDir': sourceSupportDir,
-        'sourceDbDir': sourceDbDir,
-        'sourceMusicDir': sourceMusicDir,
-        'includesAudio': includesAudio,
-        'audioEntries': audioEntries,
-      };
+    'formatVersion': formatVersion,
+    'createdAt': createdAt,
+    'source': {
+      'packageName': packageName,
+      'appVersion': appVersion,
+      'buildNumber': buildNumber,
+      'platform': platform,
+    },
+    'sourceSupportDir': sourceSupportDir,
+    'sourceDbDir': sourceDbDir,
+    'sourceMusicDir': sourceMusicDir,
+    'includesAudio': includesAudio,
+    'audioEntries': audioEntries,
+  };
 
   String toJsonString() => jsonEncode(toJson());
 

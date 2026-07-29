@@ -188,6 +188,21 @@ class SettingsScreenController extends ChangeNotifier
     return pending;
   }
 
+  bool _accountSectionRevealPending = false;
+
+  /// The same one-shot mechanism for the Account section, so the lapsed-session
+  /// banner can send the user straight to the sign-in button instead of just
+  /// dropping them on a Settings screen with everything collapsed.
+  void requestAccountSectionReveal() {
+    _accountSectionRevealPending = true;
+  }
+
+  bool consumeAccountSectionReveal() {
+    final pending = _accountSectionRevealPending;
+    _accountSectionRevealPending = false;
+    return pending;
+  }
+
   Future<UpdateInfo?> checkNewVersion() async {
     updateChannel.value = _settingsRepository.getUpdateChannel();
     final info = await newVersionCheck(

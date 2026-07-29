@@ -15,4 +15,7 @@ void registerAppServices(ProviderContainer container) {
   if (RuntimePlatform.isDesktop) {
     container.read(desktopSystemTrayProvider);
   }
+  // The cloud playback receiver is deliberately NOT started here. It opens an
+  // authenticated WebSocket, so starting it before sign-in would just retry-loop
+  // against a 401. MyApp starts it once the account is authenticated.
 }

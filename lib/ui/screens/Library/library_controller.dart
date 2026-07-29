@@ -39,12 +39,15 @@ class LibrarySongsController extends ChangeNotifier {
     required DownloadRepository downloadRepository,
     required LibraryRepository libraryRepository,
     required SongCacheRepository songCacheRepository,
+    required SettingsRepository settingsRepository,
   }) : _downloadRepository = downloadRepository,
        _songCacheRepository = songCacheRepository,
+       _settingsRepository = settingsRepository,
        _libraryRepository = libraryRepository;
 
   final DownloadRepository _downloadRepository;
   final SongCacheRepository _songCacheRepository;
+  final SettingsRepository _settingsRepository;
   final LibraryRepository _libraryRepository;
   LibraryRepository get _library => _libraryRepository;
 
@@ -98,9 +101,7 @@ class LibrarySongsController extends ChangeNotifier {
       }
     }
 
-    final songs = await _library.getAllLibrarySongs();
-    sortSongsNVideos(songs, defaultSortType, defaultSortAscending);
-    librarySongsList = songs;
+    await reloadSongs(notify: false);
     isSongFetched = true;
     notifyListeners();
 
@@ -109,8 +110,79 @@ class LibrarySongsController extends ChangeNotifier {
       songCacheRepository: _songCacheRepository,
       downloadRepository: _downloadRepository,
       libraryRepository: _library,
+      settingsRepository: _settingsRepository,
       librarySongsController: this,
     );
+  }
+
+  /// Whether this device has ever been signed in. With no account there is
+  /// nothing to scope the list to, so everything local is shown and the
+  /// "show unliked" toggle would be meaningless.
+  bool get hasAccount => _settingsRepository.getCloudAccountSubject() != null;
+
+  bool get showUnlikedDownloads =>
+      _settingsRepository.getSongsShowUnlikedDownloads();
+
+  bool get includeCachedSongs => _settingsRepository.getSongsIncludeCached();
+
+  /// True when the list is empty only because the account filter hid
+  /// everything — the difference between "you have no music" and "none of your
+  /// downloads are in your library yet", which the empty state must explain.
+  bool hasHiddenSongs = false;
+
+  Future<void> setShowUnlikedDownloads(bool value) async {
+    await _settingsRepository.setSongsShowUnlikedDownloads(value);
+    await reloadSongs();
+  }
+
+  Future<void> setIncludeCachedSongs(bool value) async {
+    await _settingsRepository.setSongsIncludeCached(value);
+    await reloadSongs();
+  }
+
+  /// Set once this controller is disposed, so async work that outlives it does
+  /// not notify a dead listener list.
+  ///
+  /// [LibrarySongsControllerRegistry] holds a static reference, so callers
+  /// reaching the Songs tab from outside the widget tree (signing in, cloud
+  /// sync applying remote changes) can be holding a controller the tree has
+  /// already thrown away — and reloads started before disposal can land after
+  /// it either way, since they await Hive in between.
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    LibrarySongsControllerRegistry.unregister(this);
+    super.dispose();
+  }
+
+  /// Re-reads the Songs list under the current filters, preserving the active
+  /// sort.
+  Future<void> reloadSongs({bool notify = true}) async {
+    if (_disposed) return;
+    final likedOnly = hasAccount && !showUnlikedDownloads;
+    final songs = await _library.getSongsTabList(
+      likedOnly: likedOnly,
+      includeCached: includeCachedSongs,
+    );
+    hasHiddenSongs =
+        likedOnly &&
+        songs.isEmpty &&
+        (await _library.getSongsTabList(
+          likedOnly: false,
+          includeCached: includeCachedSongs,
+        )).isNotEmpty;
+    final activeSortController =
+        SortWidgetRegistry.maybeOf(sortWidgetTag) ?? sortWidgetController;
+    sortSongsNVideos(
+      songs,
+      activeSortController?.sortType ?? defaultSortType,
+      activeSortController?.isAscending ?? defaultSortAscending,
+    );
+    if (_disposed) return;
+    librarySongsList = songs;
+    if (notify) notifyListeners();
   }
 
   void addSongToLibraryList(MediaItem song) {
@@ -338,10 +410,18 @@ class LibrarySongsControllerRegistry {
 
   static LibrarySongsController? _controller;
 
-  static LibrarySongsController? get current => _controller;
+  /// Never a disposed controller: this is static, so without the check it
+  /// keeps handing out the last one registered long after the widget tree
+  /// that owned it is gone.
+  static LibrarySongsController? get current =>
+      _controller?._disposed == true ? null : _controller;
 
   static void register(LibrarySongsController controller) {
     _controller = controller;
+  }
+
+  static void unregister(LibrarySongsController controller) {
+    if (identical(_controller, controller)) _controller = null;
   }
 }
 

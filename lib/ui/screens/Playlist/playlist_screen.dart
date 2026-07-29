@@ -102,7 +102,11 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen>
           return true;
         },
         child: AnimatedBuilder(
-          animation: Listenable.merge([playlistController, downloader]),
+          animation: Listenable.merge([
+            playlistController,
+            playlistController.songList,
+            downloader,
+          ]),
           builder: (context, _) => Stack(
             children: [
               // The artwork depends on scrollOffset, which updates every

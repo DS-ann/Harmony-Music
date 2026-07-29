@@ -51,134 +51,138 @@ void main() {
       tempRoot.deleteSync(recursive: true);
     });
 
-    test('scan + createBackup produce a manifest-first streamed archive',
-        () async {
-      final dbDir = Directory('${tempRoot.path}/db')..createSync();
-      final supportDir = Directory('${tempRoot.path}/support')..createSync();
-      final musicDir = Directory('${supportDir.path}/Music')
-        ..createSync(recursive: true);
-      final thumbsDir = Directory('${supportDir.path}/thumbnails')
-        ..createSync(recursive: true);
-      final externalDir = Directory('${tempRoot.path}/external')..createSync();
+    test(
+      'scan + createBackup produce a manifest-first streamed archive',
+      () async {
+        final dbDir = Directory('${tempRoot.path}/db')..createSync();
+        final supportDir = Directory('${tempRoot.path}/support')..createSync();
+        final musicDir = Directory('${supportDir.path}/Music')
+          ..createSync(recursive: true);
+        final thumbsDir = Directory('${supportDir.path}/thumbnails')
+          ..createSync(recursive: true);
+        final externalDir = Directory('${tempRoot.path}/external')
+          ..createSync();
 
-      File('${dbDir.path}/box1.hive').writeAsStringSync('hive-data' * 100);
-      final audioA = File('${musicDir.path}/song.m4a')
-        ..writeAsStringSync('audio-A-content');
-      final audioB = File('${externalDir.path}/song.m4a')
-        ..writeAsStringSync('audio-B-different-content');
-      File('${thumbsDir.path}/thumb.png').writeAsStringSync('png-data');
+        File('${dbDir.path}/box1.hive').writeAsStringSync('hive-data' * 100);
+        final audioA = File('${musicDir.path}/song.m4a')
+          ..writeAsStringSync('audio-A-content');
+        final audioB = File('${externalDir.path}/song.m4a')
+          ..writeAsStringSync('audio-B-different-content');
+        File('${thumbsDir.path}/thumb.png').writeAsStringSync('png-data');
 
-      final storageAdmin = _FakeStorageAdminRepository(dbDir.path);
-      final service = BackupService(
-        downloadRepository:
-            _FakeDownloadRepository([audioA.path, audioB.path]),
-        playlistRepository: _FakePlaylistRepository([
-          Playlist(
-            title: 'local list',
-            playlistId: 'LOCAL_PLAYLIST_1',
-            thumbnailUrl: '',
+        final storageAdmin = _FakeStorageAdminRepository(dbDir.path);
+        final service = BackupService(
+          downloadRepository: _FakeDownloadRepository([
+            audioA.path,
+            audioB.path,
+          ]),
+          playlistRepository: _FakePlaylistRepository([
+            Playlist(
+              title: 'local list',
+              playlistId: 'LOCAL_PLAYLIST_1',
+              thumbnailUrl: '',
+            ),
+          ]),
+          settingsRepository: _FakeSettingsRepository(),
+          storageAdminRepository: storageAdmin,
+          supportDirPathProvider: () async => supportDir.path,
+          appInfoProvider: () async => const AppPlatformInfo(
+            appName: 'HM',
+            packageName: 'com.test.harmonymusic',
+            version: '9.9.9',
+            buildNumber: '7',
           ),
-        ]),
-        settingsRepository: _FakeSettingsRepository(),
-        storageAdminRepository: storageAdmin,
-        supportDirPathProvider: () async => supportDir.path,
-        appInfoProvider: () async => const AppPlatformInfo(
-          appName: 'HM',
-          packageName: 'com.test.harmonymusic',
-          version: '9.9.9',
-          buildNumber: '7',
-        ),
-      );
+        );
 
-      final entries = await service.scanFilesToBackup(includeAudio: true);
+        final entries = await service.scanFilesToBackup(includeAudio: true);
 
-      // Dynamic per-playlist boxes were flushed alongside the static list.
-      expect(storageAdmin.flushedStatic, isTrue);
-      expect(storageAdmin.flushedBoxes, contains('LOCAL_PLAYLIST_1'));
+        // Dynamic per-playlist boxes were flushed alongside the static list.
+        expect(storageAdmin.flushedStatic, isTrue);
+        expect(storageAdmin.flushedBoxes, contains('LOCAL_PLAYLIST_1'));
 
-      final archiveNames = entries.map((e) => e.archiveName).toList();
-      expect(archiveNames, contains('box1.hive'));
-      expect(archiveNames, contains('song.m4a'));
-      expect(archiveNames, contains('song (2).m4a'));
-      expect(archiveNames, contains('thumb.png'));
+        final archiveNames = entries.map((e) => e.archiveName).toList();
+        expect(archiveNames, contains('box1.hive'));
+        expect(archiveNames, contains('song.m4a'));
+        expect(archiveNames, contains('song (2).m4a'));
+        expect(archiveNames, contains('thumb.png'));
 
-      final zipPath = '${tempRoot.path}/backup.hmb';
-      await service.createBackup(entries, zipPath, (_) {});
+        final zipPath = '${tempRoot.path}/backup.hmb';
+        await service.createBackup(entries, zipPath, (_) {});
 
-      final input = InputFileStream(zipPath);
-      final archive = ZipDecoder().decodeStream(input);
-      try {
-        final manifestEntry = archive.find(backupManifestFileName);
-        expect(manifestEntry, isNotNull);
-        final manifest = BackupManifest.fromJsonString(
-          utf8.decode(manifestEntry!.readBytes()!),
-        );
-        expect(manifest, isNotNull);
-        expect(manifest!.packageName, 'com.test.harmonymusic');
-        expect(manifest.platform, Platform.operatingSystem);
-        expect(manifest.sourceSupportDir, supportDir.path);
-        expect(manifest.sourceDbDir, dbDir.path);
-        expect(manifest.sourceMusicDir, '${supportDir.path}/Music');
-        expect(manifest.includesAudio, isTrue);
-        expect(
-          manifest.audioEntries['song.m4a'],
-          audioA.absolute.path,
-        );
-        expect(
-          manifest.audioEntries['song (2).m4a'],
-          audioB.absolute.path,
-        );
-        expect(manifest.audioEntries.containsKey('thumb.png'), isFalse);
+        final input = InputFileStream(zipPath);
+        final archive = ZipDecoder().decodeStream(input);
+        try {
+          final manifestEntry = archive.find(backupManifestFileName);
+          expect(manifestEntry, isNotNull);
+          final manifest = BackupManifest.fromJsonString(
+            utf8.decode(manifestEntry!.readBytes()!),
+          );
+          expect(manifest, isNotNull);
+          expect(manifest!.packageName, 'com.test.harmonymusic');
+          expect(manifest.platform, Platform.operatingSystem);
+          expect(manifest.sourceSupportDir, supportDir.path);
+          expect(manifest.sourceDbDir, dbDir.path);
+          expect(manifest.sourceMusicDir, '${supportDir.path}/Music');
+          expect(manifest.includesAudio, isTrue);
+          expect(manifest.audioEntries['song.m4a'], audioA.absolute.path);
+          expect(manifest.audioEntries['song (2).m4a'], audioB.absolute.path);
+          expect(manifest.audioEntries.containsKey('thumb.png'), isFalse);
 
-        // Every entry round-trips byte-for-byte (proves the streamed
-        // store-mode audio entries and gzip database entries are intact).
-        expect(
-          utf8.decode(archive.find('song.m4a')!.readBytes()!),
-          'audio-A-content',
-        );
-        expect(
-          utf8.decode(archive.find('song (2).m4a')!.readBytes()!),
-          'audio-B-different-content',
-        );
-        expect(
-          utf8.decode(archive.find('box1.hive')!.readBytes()!),
-          'hive-data' * 100,
-        );
-        expect(
-          utf8.decode(archive.find('thumb.png')!.readBytes()!),
-          'png-data',
-        );
-      } finally {
-        await archive.clear();
-        await input.close();
-      }
-    });
+          // Every entry round-trips byte-for-byte (proves the streamed
+          // store-mode audio entries and gzip database entries are intact).
+          expect(
+            utf8.decode(archive.find('song.m4a')!.readBytes()!),
+            'audio-A-content',
+          );
+          expect(
+            utf8.decode(archive.find('song (2).m4a')!.readBytes()!),
+            'audio-B-different-content',
+          );
+          expect(
+            utf8.decode(archive.find('box1.hive')!.readBytes()!),
+            'hive-data' * 100,
+          );
+          expect(
+            utf8.decode(archive.find('thumb.png')!.readBytes()!),
+            'png-data',
+          );
+        } finally {
+          await archive.clear();
+          await input.close();
+        }
+      },
+    );
   });
 
   group('backup service source checks', () {
     late String backupServiceSource;
 
     setUpAll(() {
-      backupServiceSource =
-          File('lib/services/backup/backup_service.dart').readAsStringSync();
+      backupServiceSource = File(
+        'lib/services/backup/backup_service.dart',
+      ).readAsStringSync();
     });
 
     test('boxes are flushed before the database directory is scanned', () {
       final flushIndex = backupServiceSource.indexOf('flushBackupBoxes()');
-      final playlistFlushIndex =
-          backupServiceSource.indexOf('flushBox(playlist.playlistId)');
-      final scanIndex =
-          backupServiceSource.indexOf('processDirectoryInIsolate(dbDir)');
+      final playlistFlushIndex = backupServiceSource.indexOf(
+        'flushBox(playlist.playlistId)',
+      );
+      final scanIndex = backupServiceSource.indexOf(
+        'processDirectoryInIsolate(dbDir)',
+      );
       expect(flushIndex, greaterThan(-1));
       expect(playlistFlushIndex, greaterThan(flushIndex));
       expect(scanIndex, greaterThan(playlistFlushIndex));
     });
 
     test('manifest is written before any data entry', () {
-      final manifestWriteIndex = backupServiceSource
-          .indexOf('ArchiveFile.string(backupManifestFileName');
-      final entryLoopIndex =
-          backupServiceSource.indexOf('for (var i = 0; i < entries.length');
+      final manifestWriteIndex = backupServiceSource.indexOf(
+        'ArchiveFile.string(backupManifestFileName',
+      );
+      final entryLoopIndex = backupServiceSource.indexOf(
+        'for (var i = 0; i < entries.length',
+      );
       expect(manifestWriteIndex, greaterThan(-1));
       expect(entryLoopIndex, greaterThan(manifestWriteIndex));
     });
@@ -189,10 +193,7 @@ void main() {
       // CompressionType.none via addArchiveFile.
       expect(backupServiceSource, contains('CompressionType.none'));
       expect(backupServiceSource, contains('ArchiveFile.stream('));
-      expect(
-        backupServiceSource.contains('ZipFileEncoder.store'),
-        isFalse,
-      );
+      expect(backupServiceSource.contains('ZipFileEncoder.store'), isFalse);
     });
   });
 }

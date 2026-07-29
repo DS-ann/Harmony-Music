@@ -23,24 +23,30 @@ void main() {
       RestorePathResolver(manifest: manifest, supportDirPath: supportDirPath);
 
   group('RestorePathResolver', () {
-    test('resolves via the exact audio entry map, including renamed entries',
-        () {
-      final resolver = resolverFor(prodManifest(audioEntries: {
-        'song.m4a': '$prodMusicDir/song.m4a',
-        'song (2).m4a': '/storage/emulated/0/Music/song.m4a',
-      }));
+    test(
+      'resolves via the exact audio entry map, including renamed entries',
+      () {
+        final resolver = resolverFor(
+          prodManifest(
+            audioEntries: {
+              'song.m4a': '$prodMusicDir/song.m4a',
+              'song (2).m4a': '/storage/emulated/0/Music/song.m4a',
+            },
+          ),
+        );
 
-      expect(
-        resolver.resolveCandidate('$prodMusicDir/song.m4a'),
-        '$supportDirPath/Music/song.m4a',
-      );
-      // The external copy was renamed inside the archive; only the manifest
-      // map knows that — filename guessing could never find it.
-      expect(
-        resolver.resolveCandidate('/storage/emulated/0/Music/song.m4a'),
-        '$supportDirPath/Music/song (2).m4a',
-      );
-    });
+        expect(
+          resolver.resolveCandidate('$prodMusicDir/song.m4a'),
+          '$supportDirPath/Music/song.m4a',
+        );
+        // The external copy was renamed inside the archive; only the manifest
+        // map knows that — filename guessing could never find it.
+        expect(
+          resolver.resolveCandidate('/storage/emulated/0/Music/song.m4a'),
+          '$supportDirPath/Music/song (2).m4a',
+        );
+      },
+    );
 
     test('falls back to source Music-directory prefix swapping', () {
       final resolver = resolverFor(prodManifest());
@@ -59,11 +65,13 @@ void main() {
 
     test('normalizes Windows separators from backups made on Windows', () {
       const winSupport = r'C:\Users\me\AppData\Roaming\harmonymusic';
-      final resolver = resolverFor(BackupManifest(
-        sourceSupportDir: winSupport,
-        sourceMusicDir: '$winSupport\\Music',
-        audioEntries: {'song.m4a': '$winSupport\\Music\\song.m4a'},
-      ));
+      final resolver = resolverFor(
+        BackupManifest(
+          sourceSupportDir: winSupport,
+          sourceMusicDir: '$winSupport\\Music',
+          audioEntries: {'song.m4a': '$winSupport\\Music\\song.m4a'},
+        ),
+      );
 
       expect(
         resolver.resolveCandidate('$winSupport\\Music\\song.m4a'),
@@ -95,27 +103,28 @@ void main() {
       );
     });
 
-    test('leaves entry unchanged when it already points at the resolved file',
-        () {
-      final song = _song('$supportDirPath/Music/song.opus');
-      // Manifest of a backup made by THIS install (same-device restore).
-      final manifest = BackupManifest(
-        sourceSupportDir: supportDirPath,
-        sourceMusicDir: '$supportDirPath/Music',
-      );
+    test(
+      'leaves entry unchanged when it already points at the resolved file',
+      () {
+        final song = _song('$supportDirPath/Music/song.opus');
+        // Manifest of a backup made by THIS install (same-device restore).
+        final manifest = BackupManifest(
+          sourceSupportDir: supportDirPath,
+          sourceMusicDir: '$supportDirPath/Music',
+        );
 
-      final rewritten = rewriteRestoredDownloadSongWithResolver(
-        song,
-        supportDirPath,
-        resolverFor(manifest),
-        fileExists: (path) => path == '$supportDirPath/Music/song.opus',
-      );
+        final rewritten = rewriteRestoredDownloadSongWithResolver(
+          song,
+          supportDirPath,
+          resolverFor(manifest),
+          fileExists: (path) => path == '$supportDirPath/Music/song.opus',
+        );
 
-      expect(rewritten, isNull);
-    });
+        expect(rewritten, isNull);
+      },
+    );
 
-    test('falls back to legacy heuristics when the resolver has no answer',
-        () {
+    test('falls back to legacy heuristics when the resolver has no answer', () {
       final song = _song('/some/unknown/place/song.opus');
 
       final withResolver = rewriteRestoredDownloadSongWithResolver(
@@ -134,8 +143,7 @@ void main() {
       expect(withResolver!['url'], '$supportDirPath/Music/song.opus');
     });
 
-    test(
-        'falls back to legacy keep-and-strip when the resolved file is '
+    test('falls back to legacy keep-and-strip when the resolved file is '
         'missing everywhere', () {
       final song = _song('$prodMusicDir/song.opus');
 
@@ -228,8 +236,9 @@ void main() {
     late String serviceSource;
 
     setUpAll(() {
-      serviceSource =
-          File('lib/services/backup/restore_service.dart').readAsStringSync();
+      serviceSource = File(
+        'lib/services/backup/restore_service.dart',
+      ).readAsStringSync();
     });
 
     test('manifest entry is consumed in memory and never extracted', () {
@@ -249,10 +258,7 @@ void main() {
     test('both rewrite phases receive the resolver', () {
       final resolverIndex = serviceSource.indexOf('RestorePathResolver(');
       expect(resolverIndex, greaterThan(-1));
-      expect(
-        RegExp('resolver: resolver').allMatches(serviceSource).length,
-        2,
-      );
+      expect(RegExp('resolver: resolver').allMatches(serviceSource).length, 2);
     });
   });
 }
@@ -263,7 +269,7 @@ Map<dynamic, dynamic> _song(String path) {
     'url': path,
     'streamInfo': [
       true,
-      {'url': path}
+      {'url': path},
     ],
   };
 }

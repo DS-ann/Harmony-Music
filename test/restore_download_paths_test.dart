@@ -48,23 +48,23 @@ void main() {
     });
 
     test(
-        'keeps original path when restored file is missing but original exists',
-        () {
-      final song = _song('/home/me/Music/song.opus');
+      'keeps original path when restored file is missing but original exists',
+      () {
+        final song = _song('/home/me/Music/song.opus');
 
-      final rewritten = rewriteRestoredDownloadSong(
-        song,
-        supportDirPath,
-        fileExists: (path) => path == '/home/me/Music/song.opus',
-      );
+        final rewritten = rewriteRestoredDownloadSong(
+          song,
+          supportDirPath,
+          fileExists: (path) => path == '/home/me/Music/song.opus',
+        );
 
-      expect(rewritten, isNotNull);
-      expect(rewritten!['url'], '/home/me/Music/song.opus');
-      expect(rewritten['streamInfo'][1]['url'], '/home/me/Music/song.opus');
-    });
+        expect(rewritten, isNotNull);
+        expect(rewritten!['url'], '/home/me/Music/song.opus');
+        expect(rewritten['streamInfo'][1]['url'], '/home/me/Music/song.opus');
+      },
+    );
 
-    test(
-        'keeps entry but strips dead path when neither restored nor original '
+    test('keeps entry but strips dead path when neither restored nor original '
         'file exists', () {
       final song = _song('/home/me/Music/song.opus');
 
@@ -112,7 +112,9 @@ void main() {
   group('restoredFileName', () {
     test('extracts names across platform path styles', () {
       expect(
-          restoredFileName('/storage/emulated/0/Music/song.m4a'), 'song.m4a');
+        restoredFileName('/storage/emulated/0/Music/song.m4a'),
+        'song.m4a',
+      );
       expect(restoredFileName(r'C:\Users\me\Music\song.m4a'), 'song.m4a');
       expect(restoredFileName('/home/me/Music/song.opus'), 'song.opus');
     });
@@ -125,7 +127,7 @@ Map<String, dynamic> _song(String path) {
     'url': path,
     'streamInfo': [
       true,
-      {'url': path}
+      {'url': path},
     ],
   };
 }

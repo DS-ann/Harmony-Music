@@ -8,8 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('library stale search reset', () {
     test('sort widget reports mounting after the first frame', () {
-      final source = File('lib/ui/widgets/sort_widget.dart')
-          .readAsStringSync();
+      final source = File('lib/ui/widgets/sort_widget.dart').readAsStringSync();
       final initStateIndex = source.indexOf('void initState()');
       final postFrameIndex = source.indexOf(
         'addPostFrameCallback',
@@ -30,12 +29,12 @@ void main() {
       final source = File(
         'lib/ui/screens/Library/library_controller.dart',
       ).readAsStringSync();
-      final occurrences =
-          'void clearStaleSearch()'.allMatches(source).length;
+      final occurrences = 'void clearStaleSearch()'.allMatches(source).length;
       expect(
         occurrences,
         4,
-        reason: 'songs, playlists, albums and artists controllers all keep '
+        reason:
+            'songs, playlists, albums and artists controllers all keep '
             'their filtered list alive across navigation',
       );
       // Each reset is a no-op when no search was active — restoring from an
@@ -49,8 +48,9 @@ void main() {
     });
 
     test('every library sort widget wires the stale-search reset', () {
-      final source = File('lib/ui/screens/Library/library.dart')
-          .readAsStringSync();
+      final source = File(
+        'lib/ui/screens/Library/library.dart',
+      ).readAsStringSync();
       expect(
         'onMounted:'.allMatches(source).length,
         4,
@@ -68,10 +68,7 @@ void main() {
       // The offset must equal the nav bar's real height (which already
       // tracks the gesture/button inset via viewPadding), not that height
       // plus a magic constant that left dead space above the mini player.
-      expect(
-        source,
-        contains('? ScrollToHideWidget.visibleHeight(context)'),
-      );
+      expect(source, contains('? ScrollToHideWidget.visibleHeight(context)'));
       expect(
         source.contains('ScrollToHideWidget.visibleHeight(context) + '),
         isFalse,

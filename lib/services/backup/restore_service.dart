@@ -45,8 +45,7 @@ class RestoreService {
        _storageAdminRepository = storageAdminRepository,
        _supportDirPathProvider =
            supportDirPathProvider ?? _defaultSupportDirPath,
-       _directoryWritableProbe =
-           directoryWritableProbe ?? _isWritableDirectory;
+       _directoryWritableProbe = directoryWritableProbe ?? _isWritableDirectory;
 
   final DownloadRepository _downloadRepository;
   final LibraryRepository _libraryRepository;

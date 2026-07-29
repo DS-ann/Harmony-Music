@@ -13,6 +13,7 @@ import 'library_controller.dart';
 import 'library_combined.dart';
 import '../../widgets/content_list_widget_item.dart';
 import '../../widgets/list_widget.dart';
+import '../../widgets/session_expired_banner.dart';
 import '../../widgets/sort_widget.dart';
 
 class SongsLibraryWidget extends ConsumerWidget {
@@ -43,6 +44,7 @@ class SongsLibraryWidget extends ConsumerWidget {
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),
+          const SessionExpiredBanner(),
           AnimatedBuilder(
             animation: libSongsController,
             builder: (context, _) => SortWidget(
@@ -56,6 +58,21 @@ class SongsLibraryWidget extends ConsumerWidget {
               initialIsAscending: LibrarySongsController.defaultSortAscending,
               isSearchFeatureRequired: true,
               isSongDeletionFeatureRequired: true,
+              filterOptions: [
+                // Hidden with no account: there is nothing to scope to, so the
+                // switch would do nothing.
+                if (libSongsController.hasAccount)
+                  SortFilterOption(
+                    label: context.l10n.showDownloadsNotInLibrary,
+                    value: libSongsController.showUnlikedDownloads,
+                    onChanged: libSongsController.setShowUnlikedDownloads,
+                  ),
+                SortFilterOption(
+                  label: context.l10n.includeCachedSongs,
+                  value: libSongsController.includeCachedSongs,
+                  onChanged: libSongsController.setIncludeCachedSongs,
+                ),
+              ],
               onSort: (type, ascending) {
                 libSongsController.onSort(type, ascending);
               },
@@ -96,10 +113,39 @@ class SongsLibraryWidget extends ConsumerWidget {
                           ))
                   : Expanded(
                       child: Center(
-                        child: Text(
-                          context.l10n.noOfflineSong,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
+                        // Songs listing only what the account claims means an
+                        // empty tab can mean "nothing downloaded" or "nothing
+                        // downloaded is in your library yet". Saying which, and
+                        // offering the way out, keeps the second from reading
+                        // as lost music.
+                        child: libSongsController.hasHiddenSongs
+                            ? Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 32,
+                                    ),
+                                    child: Text(
+                                      context.l10n.songsFilteredToLibrary,
+                                      textAlign: TextAlign.center,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleMedium,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  TextButton(
+                                    onPressed: () => libSongsController
+                                        .setShowUnlikedDownloads(true),
+                                    child: Text(context.l10n.showAllDownloads),
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                context.l10n.noOfflineSong,
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
                       ),
                     );
             },
@@ -131,7 +177,7 @@ class PlaylistNAlbumLibraryWidget extends ConsumerWidget {
     LibraryAlbumsControllerRegistry.register(libraryAlbumController);
     final size = MediaQuery.of(context).size;
 
-    const double itemHeight = 180;
+    const double itemHeight = contentListItemHeight;
     const double itemWidth = 130;
     final topPadding =
         MediaQuery.orientationOf(context) == Orientation.landscape

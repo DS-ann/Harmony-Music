@@ -37,6 +37,30 @@ class HiveSongCacheRepository implements SongCacheRepository {
   @override
   Future<void> deleteCachedSong(String songId) => _songsBox.delete(songId);
 
+  /// Drops cached songs that carry no album identity, returning how many went.
+  ///
+  /// The cache is consulted before any network source, so whatever lands here
+  /// wins forever. Metadata resolved while the Resolver only knew a song's
+  /// video shape — channel as artist, letterboxed thumbnail, no album — pinned
+  /// that view in place and no later, richer lookup could replace it. Dropping
+  /// those entries lets them resolve again now that YouTube Music metadata is
+  /// available; entries with an album id are already rich and stay.
+  @override
+  Future<int> purgeSongsWithoutAlbumId() async {
+    final stale = _songsBox.keys.where((key) {
+      final value = _songsBox.get(key);
+      if (value is! Map) return true;
+      final album = value['album'];
+      if (album is! Map) return true;
+      final id = album['id'];
+      return id is! String || id.isEmpty;
+    }).toList();
+    for (final key in stale) {
+      await _songsBox.delete(key);
+    }
+    return stale.length;
+  }
+
   @override
   Future<dynamic> getStreamCacheEntry(String songId) async =>
       _streamsBox.get(songId);

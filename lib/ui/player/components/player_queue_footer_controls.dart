@@ -21,6 +21,8 @@ class PlayerQueueFooterControls extends ConsumerWidget {
         playerController.currentQueue,
         playerController.isQueueLoopModeEnabled,
         playerController.isShuffleModeEnabled,
+        // Queue backfill progress lives on the controller itself.
+        playerController,
       ]),
       builder: (context, _) => Align(
         alignment: Alignment.bottomCenter,
@@ -46,11 +48,25 @@ class PlayerQueueFooterControls extends ConsumerWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    Text(
-                      "${playerController.currentQueue.length} ${context.l10n.songs}",
-                      style: Theme.of(context).textTheme.titleSmall!.copyWith(
-                        color: Theme.of(context).textTheme.titleMedium!.color,
-                      ),
+                    Builder(
+                      builder: (context) {
+                        final progress =
+                            playerController.queueResolutionProgress;
+                        // While a cloud queue is still resolving, say so
+                        // instead of silently filling rows in.
+                        final label = progress == null
+                            ? "${playerController.currentQueue.length} ${context.l10n.songs}"
+                            : "${progress.$1}/${progress.$2} ${context.l10n.songs}";
+                        return Text(
+                          label,
+                          style: Theme.of(context).textTheme.titleSmall!
+                              .copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).textTheme.titleMedium!.color,
+                              ),
+                        );
+                      },
                     ),
                     InkWell(
                       onTap: () {

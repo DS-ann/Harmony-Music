@@ -1,39 +1,57 @@
-import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harmonymusic/models/media_Item_builder.dart';
 
 void main() {
-  group('MediaItemBuilder.displayDuration', () {
-    test('uses existing length text when present', () {
-      final song = MediaItem(
-        id: 'song-id',
-        title: 'Song',
-        extras: const {'length': '2:25'},
-      );
-
-      expect(MediaItemBuilder.displayDuration(song), '2:25');
+  test('accepts portable synced media without URL fields', () {
+    final item = MediaItemBuilder.fromJson({
+      'videoId': 'portable-song',
+      'title': 'Portable song',
+      'artists': [
+        {'name': 'Harmony'},
+      ],
+      'duration': 120,
     });
 
-    test('falls back to media duration when length text is missing', () {
-      final song = MediaItem(
-        id: 'song-id',
-        title: 'Song',
-        duration: const Duration(milliseconds: 148261),
-        extras: const {'length': null},
-      );
+    expect(item.id, 'portable-song');
+    expect(item.artUri?.host, 'i.ytimg.com');
+    expect(item.extras?['url'], isNull);
+  });
 
-      expect(MediaItemBuilder.displayDuration(song), '2:28');
+  group('artist metadata normalization', () {
+    test('normalizes mixed legacy and rich artist entries', () {
+      final item = MediaItemBuilder.fromJson({
+        'videoId': 'artist-test',
+        'title': 'Mixed artists',
+        'artists': [
+          ' Legacy Artist ',
+          {'name': ' Rich Artist ', 'id': ' UC_rich '},
+          {'name': 'Id-less Artist', 'id': ''},
+          {'id': 'UC_missing_name'},
+          '',
+          42,
+          null,
+        ],
+      });
+
+      expect(item.artist, 'Legacy Artist, Rich Artist, Id-less Artist');
+      expect(item.extras?['artists'], [
+        {'name': 'Legacy Artist'},
+        {'name': 'Rich Artist', 'id': 'UC_rich'},
+        {'name': 'Id-less Artist'},
+      ]);
     });
 
-    test('formats hour-long media with hours', () {
-      final song = MediaItem(
-        id: 'song-id',
-        title: 'Song',
-        duration: const Duration(hours: 1, minutes: 2, seconds: 3),
-        extras: const {'length': null},
-      );
+    test('accepts one legacy artist string', () {
+      final item = MediaItemBuilder.fromJson({
+        'videoId': 'legacy-test',
+        'title': 'Legacy artist',
+        'artists': 'Cunami Flo',
+      });
 
-      expect(MediaItemBuilder.displayDuration(song), '01:02:03');
+      expect(item.artist, 'Cunami Flo');
+      expect(item.extras?['artists'], [
+        {'name': 'Cunami Flo'},
+      ]);
     });
   });
 }

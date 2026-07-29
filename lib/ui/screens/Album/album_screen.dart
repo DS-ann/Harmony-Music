@@ -96,7 +96,11 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
           return true;
         },
         child: AnimatedBuilder(
-          animation: Listenable.merge([albumController, downloader]),
+          animation: Listenable.merge([
+            albumController,
+            albumController.songList,
+            downloader,
+          ]),
           builder: (context, _) => Stack(
             children: [
               // The artwork depends on scrollOffset, which updates every

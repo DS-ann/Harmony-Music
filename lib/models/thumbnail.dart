@@ -1,5 +1,22 @@
 import '../utils/platform_utils.dart';
 
+/// Reads the artwork URL out of a `thumbnails` field, tolerating every shape it
+/// takes in practice: missing, null, an empty list, a list of non-maps, and — as
+/// written by cloud syncs from builds whose payload sanitizer stripped every
+/// `url` including artwork ones — a list holding an empty map. Returns null when
+/// there is no usable URL so callers can pick their own fallback; reading
+/// `json['thumbnails'][0]['url']` directly throws on all of those.
+String? thumbnailUrlFromJson(dynamic json) {
+  if (json is! Map) return null;
+  final thumbnails = json['thumbnails'];
+  if (thumbnails is! List || thumbnails.isEmpty) return null;
+  final first = thumbnails.first;
+  if (first is! Map) return null;
+  final url = first['url'];
+  if (url is! String || url.isEmpty) return null;
+  return url;
+}
+
 class Thumbnail {
   Thumbnail(this._url);
   final String _url;

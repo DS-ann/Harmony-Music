@@ -28,6 +28,7 @@ import '/services/crash_diagnostics_service.dart';
 import '/services/playback_queue_order.dart';
 import '/services/playback_preload_service.dart';
 import '/services/playback_start_trace.dart';
+import '/services/previous_track_policy.dart';
 import '/services/equalizer.dart';
 import '/services/stream_service.dart';
 import '/models/hm_streaming_data.dart';
@@ -139,6 +140,10 @@ class MyAudioHandler extends BaseAudioHandler {
   bool _stallRecoveryInFlight = false;
   bool _sourceSwitchInProgress = false;
   bool _sourceSwitchWasPlaying = false;
+  DateTime? _previousRestartedAt;
+  bool _remoteNotificationMirrorActive = false;
+  MediaItem? _mediaItemBeforeRemoteNotification;
+  PlaybackState? _playbackStateBeforeRemoteNotification;
   Timer? _sessionSaveDebounce;
   Timer? _periodicPositionSaveTimer;
   // Suppresses the automatic session-save triggers while a saved session is
@@ -180,6 +185,14 @@ class MyAudioHandler extends BaseAudioHandler {
     if (RuntimePlatform.isWindows || RuntimePlatform.isLinux) {
       JustAudioMediaKit.title = 'Harmony music';
       JustAudioMediaKit.protocolWhitelist = const ['http', 'https', 'file'];
+      JustAudioMediaKit.mpvLogLevel = MPVLogLevel.warn;
+      JustAudioMediaKit.diagnosticCallback = (category, message) {
+        CrashDiagnosticsService.instance.recordLog(
+          'info',
+          'windows-audio/$category',
+          message,
+        );
+      };
     }
 
     _mediaLibrary = MediaLibrary(
@@ -280,9 +293,10 @@ class MyAudioHandler extends BaseAudioHandler {
     // Track change (auto-advance, skip, shuffle, setSourceNPlay). A newly
     // started song begins at zero and _player.position is unreliable mid
     // source-switch, so persist position 0 explicitly.
-    mediaItem
-        .distinct((a, b) => a?.id == b?.id)
-        .listen((_) => _scheduleSessionSave(positionOverride: Duration.zero));
+    mediaItem.distinct((a, b) => a?.id == b?.id).listen((_) {
+      if (_remoteNotificationMirrorActive) return;
+      _scheduleSessionSave(positionOverride: Duration.zero);
+    });
 
     // Any playing -> not-playing transition. A phone-call pause comes from
     // just_audio's internal interruption handler calling _player.pause()
@@ -446,6 +460,10 @@ class MyAudioHandler extends BaseAudioHandler {
   void _notifyAudioHandlerAboutPlaybackEvents() {
     _player.playbackEventStream.listen(
       (PlaybackEvent event) {
+        // While this Android device controls a remote target, audio_service is
+        // deliberately showing a notification-only mirror. Events from the
+        // phone's parked local player must not overwrite that notification.
+        if (_remoteNotificationMirrorActive) return;
         if (event.processingState == ProcessingState.ready) {
           _activePlaybackTrace?.playerReady();
         }
@@ -566,6 +584,7 @@ class MyAudioHandler extends BaseAudioHandler {
     int? errorCode,
     String? errorMessage,
   }) {
+    if (_remoteNotificationMirrorActive) return;
     final isPlaying = playing ?? _player.playing;
     playbackState.add(
       playbackState.value.copyWith(
@@ -589,6 +608,81 @@ class MyAudioHandler extends BaseAudioHandler {
         errorMessage: errorMessage,
       ),
     );
+  }
+
+  bool _forwardRemoteNotificationCommand(
+    String action, [
+    Map<String, Object?> payload = const {},
+  ]) {
+    if (!_remoteNotificationMirrorActive) return false;
+    customEvent.add({
+      'eventType': 'remoteNotificationCommand',
+      'action': action,
+      ...payload,
+    });
+    return true;
+  }
+
+  void _setRemoteNotificationPlaying(bool playing) {
+    if (!_remoteNotificationMirrorActive) return;
+    playbackState.add(
+      playbackState.value.copyWith(
+        playing: playing,
+        processingState: AudioProcessingState.ready,
+      ),
+    );
+  }
+
+  void _setRemoteNotificationMirror(
+    MediaItem remoteItem, {
+    required bool playing,
+    required bool loading,
+    required Duration position,
+  }) {
+    if (!_remoteNotificationMirrorActive) {
+      _mediaItemBeforeRemoteNotification = mediaItem.value;
+      _playbackStateBeforeRemoteNotification = playbackState.value;
+    }
+    _remoteNotificationMirrorActive = true;
+
+    final visibleItem = mediaItem.value;
+    if (visibleItem?.id != remoteItem.id ||
+        visibleItem?.title != remoteItem.title ||
+        visibleItem?.artist != remoteItem.artist ||
+        visibleItem?.album != remoteItem.album ||
+        visibleItem?.duration != remoteItem.duration ||
+        visibleItem?.artUri != remoteItem.artUri) {
+      mediaItem.add(remoteItem);
+    }
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: [
+          MediaControl.skipToPrevious,
+          if (playing) MediaControl.pause else MediaControl.play,
+          MediaControl.skipToNext,
+        ],
+        systemActions: const {MediaAction.seek},
+        androidCompactActionIndices: const [0, 1, 2],
+        processingState: loading
+            ? AudioProcessingState.buffering
+            : AudioProcessingState.ready,
+        playing: playing,
+        updatePosition: position,
+        bufferedPosition: position,
+        speed: 1,
+      ),
+    );
+  }
+
+  void _clearRemoteNotificationMirror() {
+    if (!_remoteNotificationMirrorActive) return;
+    final localItem = _mediaItemBeforeRemoteNotification;
+    final localState = _playbackStateBeforeRemoteNotification;
+    _remoteNotificationMirrorActive = false;
+    _mediaItemBeforeRemoteNotification = null;
+    _playbackStateBeforeRemoteNotification = null;
+    mediaItem.add(localItem);
+    if (localState != null) playbackState.add(localState);
   }
 
   AudioProcessingState _nonLoadingProcessingState() {
@@ -764,9 +858,20 @@ class MyAudioHandler extends BaseAudioHandler {
       '$actionName retry selected audio url empty=${streamInfo.audio!.url.isEmpty}',
       tag: LogTags.audioHandler,
     );
-    await _player.stop();
-    await _playList.clear();
+    await _clearCurrentSourceForReplacement();
     await _playList.add(_createAudioSource(song));
+  }
+
+  Future<void> _clearCurrentSourceForReplacement() async {
+    // just_audio deactivates and recreates its platform player after stop().
+    // Keeping the desktop player paused preserves the WASAPI endpoint between
+    // songs and avoids a short burst of invalid audio while it is reopened.
+    if (RuntimePlatform.isDesktop) {
+      await _player.pause();
+    } else {
+      await _player.stop();
+    }
+    await _playList.clear();
   }
 
   void _listenToPlaybackForNextSong() {
@@ -778,6 +883,11 @@ class MyAudioHandler extends BaseAudioHandler {
   }
 
   void _scheduleCompletionHandling({bool allowEndPosition = false}) {
+    // Repeat is owned by just_audio's native LoopMode.one. Some Android
+    // backends briefly report completed while that loop is being reopened;
+    // scheduling Harmony's queue/completion flow during that window can seek
+    // the already-restarted song back to zero a second time.
+    if (loopModeEnabled) return;
     if (allowEndPosition) {
       _completionHandlingAllowEndPosition = true;
     }
@@ -813,7 +923,8 @@ class MyAudioHandler extends BaseAudioHandler {
     );
     try {
       if (loopModeEnabled) {
-        await _repeatCurrentSongFromStart();
+        // LoopMode.one already restarts the source inside the native player.
+        // Seeking here races that restart and replays the first second twice.
         return;
       }
 
@@ -1159,6 +1270,9 @@ class MyAudioHandler extends BaseAudioHandler {
 
   Future<HMStreamingData?> _cachedStreamInfoForSong(String songId) async {
     if (!await _songCacheRepository.containsCachedSong(songId)) return null;
+    // Same trap as checkNGetUrl: a cache entry can outlive the file it points
+    // at, and preloading a missing file stalls the player instead of failing.
+    if (!await File("$_cacheDir/cachedSongs/$songId.mp3").exists()) return null;
 
     final cachedSongJson = await _songCacheRepository.getCachedSongJson(songId);
     final streamInfo = cachedSongJson?["streamInfo"];
@@ -1255,21 +1369,12 @@ class MyAudioHandler extends BaseAudioHandler {
     );
   }
 
-  Future<void> _repeatCurrentSongFromStart() async {
-    if (_playList.children.isEmpty || currentSongUrl == null) return;
-
-    _beginPlaybackStartTrace(PlaybackTransitionCategory.queueTransition);
-    _activePlaybackTrace?.sourceSelected(_currentPlaybackSource);
-    await _player.seek(Duration.zero, index: 0);
-    _activePlaybackTrace?.playerReady();
-    _startPlayerPlayback();
-    _startCompletionWatchdog();
-  }
-
-  Future<void> _loadCurrentSourceFromStartAndPlay() async {
+  Future<void> _loadCurrentSourceFromStartAndPlay({
+    Duration startPosition = Duration.zero,
+  }) async {
     await _player.load();
     _activePlaybackTrace?.playerReady();
-    await _player.seek(Duration.zero, index: 0);
+    await _player.seek(startPosition, index: 0);
     _startPlayerPlayback();
     _startCompletionWatchdog();
   }
@@ -1313,6 +1418,7 @@ class MyAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> updateQueue(List<MediaItem> queue) async {
+    final currentSongId = mediaItem.value?.id;
     if (shuffleModeEnabled) {
       _queueBeforeShuffle = List<MediaItem>.from(queue);
     } else {
@@ -1321,6 +1427,15 @@ class MyAudioHandler extends BaseAudioHandler {
     final newQueue = this.queue.value
       ..replaceRange(0, this.queue.value.length, queue);
     this.queue.add(newQueue);
+    if (currentSongId != null) {
+      final nextIndex = newQueue.indexWhere((item) => item.id == currentSongId);
+      if (nextIndex >= 0) {
+        currentIndex = nextIndex;
+      } else if (newQueue.isNotEmpty) {
+        final oldIndex = currentIndex is int ? currentIndex as int : 0;
+        currentIndex = oldIndex.clamp(0, newQueue.length - 1).toInt();
+      }
+    }
     _schedulePreloadWindow();
   }
 
@@ -1417,6 +1532,10 @@ class MyAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> play() async {
+    if (_forwardRemoteNotificationCommand('play')) {
+      _setRemoteNotificationPlaying(true);
+      return;
+    }
     if (currentSongUrl == null ||
         (RuntimePlatform.isDesktop &&
             (_player.duration == null ||
@@ -1446,6 +1565,10 @@ class MyAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> pause() async {
+    if (_forwardRemoteNotificationCommand('pause')) {
+      _setRemoteNotificationPlaying(false);
+      return;
+    }
     await _player.pause();
     isSongLoading = false;
     CrashDiagnosticsService.instance.record(
@@ -1463,6 +1586,18 @@ class MyAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> seek(Duration position) async {
+    if (_forwardRemoteNotificationCommand('seek', {
+      'positionMs': position.inMilliseconds,
+    })) {
+      playbackState.add(
+        playbackState.value.copyWith(
+          updatePosition: position,
+          bufferedPosition: position,
+        ),
+      );
+      return;
+    }
+    _previousRestartedAt = null;
     await _player.seek(position);
     Timer(const Duration(milliseconds: 400), () {
       if (_player.playing && _isAtEndPosition()) {
@@ -1499,6 +1634,7 @@ class MyAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> skipToNext() async {
+    if (_forwardRemoteNotificationCommand('next')) return;
     final index = _getNextSongIndex();
     if (index != currentIndex) {
       printINFO(
@@ -1536,13 +1672,28 @@ class MyAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> skipToPrevious() async {
-    if (_player.position.inMilliseconds > 5000) {
+    if (_forwardRemoteNotificationCommand('previous')) return;
+    final restartedAt = _previousRestartedAt;
+    final decisionPosition =
+        restartedAt != null &&
+            DateTime.now().difference(restartedAt) <=
+                previousTrackRestartThreshold
+        ? (_player.playing
+              ? DateTime.now().difference(restartedAt)
+              : Duration.zero)
+        : _player.position;
+    if (shouldRestartCurrentTrack(decisionPosition)) {
       _beginPlaybackStartTrace(PlaybackTransitionCategory.skip);
       _activePlaybackTrace?.sourceSelected(_currentPlaybackSource);
       await _player.seek(Duration.zero);
+      // media_kit can briefly continue reporting its pre-seek position on
+      // Windows. Remember the restart so another press uses the position the
+      // user actually sees and can select the preceding queue item.
+      _previousRestartedAt = DateTime.now();
       _activePlaybackTrace?.playerReady();
       return;
     }
+    _previousRestartedAt = null;
     final index = _getPrevSongIndex();
     if (index != currentIndex) {
       await customAction("playByIndex", {'index': index, 'transition': 'skip'});
@@ -1597,6 +1748,27 @@ class MyAudioHandler extends BaseAudioHandler {
       case 'playbackDebugSnapshot':
         return _handlerDebugSnapshot();
 
+      case 'setRemoteNotificationMirror':
+        final remoteItem = extras?['mediaItem'];
+        if (remoteItem is! MediaItem) {
+          throw const FormatException(
+            'Remote notification mirror requires a MediaItem',
+          );
+        }
+        _setRemoteNotificationMirror(
+          remoteItem,
+          playing: extras?['playing'] == true,
+          loading: extras?['loading'] == true,
+          position: Duration(
+            milliseconds: (extras?['positionMs'] as num?)?.toInt() ?? 0,
+          ),
+        );
+        break;
+
+      case 'clearRemoteNotificationMirror':
+        _clearRemoteNotificationMirror();
+        break;
+
       case 'dispose':
         _activeResolverCancellation?.cancel();
         _activeResolverCancellation = null;
@@ -1617,6 +1789,10 @@ class MyAudioHandler extends BaseAudioHandler {
 
       case 'playByIndex':
         final songIndex = extras!['index'];
+        final requestedPositionMs = ((extras['position'] as num?)?.toInt() ?? 0)
+            .clamp(0, 1 << 53)
+            .toInt();
+        final requestedPosition = Duration(milliseconds: requestedPositionMs);
         _beginPlaybackStartTrace(_playbackTransition(extras['transition']));
         currentIndex = songIndex;
         final isNewUrlReq = extras['newUrl'] ?? false;
@@ -1654,8 +1830,7 @@ class MyAudioHandler extends BaseAudioHandler {
             preparedStreamInfo: preparedStreamInfo,
           );
           if (_playList.children.isNotEmpty) {
-            await _player.stop();
-            await _playList.clear();
+            await _clearCurrentSourceForReplacement();
           }
 
           var streamInfo = await futureStreamInfo;
@@ -1750,7 +1925,9 @@ class MyAudioHandler extends BaseAudioHandler {
           } else {
             printINFO('playByIndex seek and play', tag: LogTags.audioHandler);
             try {
-              await _loadCurrentSourceFromStartAndPlay();
+              await _loadCurrentSourceFromStartAndPlay(
+                startPosition: requestedPosition,
+              );
             } catch (error, stackTrace) {
               if (isNewUrlReq) rethrow;
               final retryStreamInfo =
@@ -1773,7 +1950,9 @@ class MyAudioHandler extends BaseAudioHandler {
               if (loudnessNormalizationEnabled && RuntimePlatform.isAndroid) {
                 await _normalizeVolume(retryStreamInfo.audio!.loudnessDb);
               }
-              await _loadCurrentSourceFromStartAndPlay();
+              await _loadCurrentSourceFromStartAndPlay(
+                startPosition: requestedPosition,
+              );
             }
             isSongLoading = false;
             _emitSourceStartedSnapshot();
@@ -1849,8 +2028,7 @@ class MyAudioHandler extends BaseAudioHandler {
             tag: LogTags.audioHandler,
           );
           final futureStreamInfo = _sourceInfoForPlayback(currMed);
-          await _player.stop();
-          await _playList.clear();
+          await _clearCurrentSourceForReplacement();
           var streamInfo = await futureStreamInfo;
           if (requestGeneration != _playbackGeneration) {
             _endSourceSwitch();
@@ -2225,6 +2403,10 @@ class MyAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> stop() async {
+    if (_forwardRemoteNotificationCommand('pause')) {
+      _setRemoteNotificationPlaying(false);
+      return;
+    }
     await _player.stop();
     isSongLoading = false;
     _clearPreloadWindow();
@@ -2252,6 +2434,25 @@ class MyAudioHandler extends BaseAudioHandler {
     printINFO("Requested id : $songId", tag: LogTags.audioHandler);
     if (!offlineReplacementUrl &&
         await _songCacheRepository.containsCachedSong(songId)) {
+      // The Hive entry is not proof the audio is still on disk. On Windows the
+      // cache lives in %TEMP%, which Storage Sense empties behind the app's
+      // back, leaving entries pointing at files that no longer exist. Handing
+      // just_audio a missing file does not raise — it sits in `loading`
+      // forever, which looks exactly like a hung handoff.
+      final cachedPath = "$_cacheDir/cachedSongs/$songId.mp3";
+      if (!await File(cachedPath).exists()) {
+        printWarning(
+          "Cached audio for $songId is missing from disk; dropping the stale "
+          "cache entry and resolving online",
+          tag: LogTags.audioHandler,
+        );
+        await _songCacheRepository.deleteCachedSong(songId);
+        return checkNGetUrl(
+          songId,
+          generateNewUrl: generateNewUrl,
+          allowResolver: allowResolver,
+        );
+      }
       printINFO("Got Song from cachedbox ($songId)", tag: LogTags.audioHandler);
       // if contains stream Info
       final cachedSongJson = await _songCacheRepository.getCachedSongJson(

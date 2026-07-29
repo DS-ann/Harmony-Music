@@ -41,7 +41,7 @@ void main() {
       expect(failureBlock, contains('errorMessage: message'));
     });
 
-    test('successful source play emits a non-loading playback snapshot', () {
+    test('successful source play emits a ready playback snapshot', () {
       final playByIndex = _caseBlock(source, 'playByIndex');
       final setSourceNPlay = _caseBlock(source, 'setSourceNPlay');
       final snapshotBlock = _methodBlock(source, '_emitSourceStartedSnapshot');
@@ -77,12 +77,16 @@ void main() {
         '_loadCurrentSourceFromStartAndPlay',
       );
 
-      expect(playByIndex, contains('_loadCurrentSourceFromStartAndPlay();'));
+      expect(playByIndex, contains('_loadCurrentSourceFromStartAndPlay('));
       expect(setSourceNPlay, contains('_loadCurrentSourceFromStartAndPlay();'));
       expect(loadStartBlock, contains('await _player.load();'));
       expect(
         loadStartBlock,
-        contains('await _player.seek(Duration.zero, index: 0);'),
+        contains('await _player.seek(startPosition, index: 0);'),
+      );
+      expect(
+        loadStartBlock,
+        contains('Duration startPosition = Duration.zero'),
       );
       expect(loadStartBlock, contains('_startPlayerPlayback();'));
       expect(loadStartBlock, isNot(contains('await _player.play();')));
@@ -134,8 +138,18 @@ void main() {
       expect(setSourceNPlay, contains('_replaceCurrentSourceWithStreamInfo'));
       expect(freshUrlBlock, contains('generateNewUrl: true'));
       expect(freshUrlBlock, contains('source-load-retry'));
-      expect(replaceSourceBlock, contains('await _player.stop();'));
-      expect(replaceSourceBlock, contains('await _playList.clear();'));
+      expect(
+        replaceSourceBlock,
+        contains('await _clearCurrentSourceForReplacement();'),
+      );
+      final clearSourceBlock = _methodBlock(
+        source,
+        '_clearCurrentSourceForReplacement',
+      );
+      expect(clearSourceBlock, contains('RuntimePlatform.isDesktop'));
+      expect(clearSourceBlock, contains('await _player.pause();'));
+      expect(clearSourceBlock, contains('await _player.stop();'));
+      expect(clearSourceBlock, contains('await _playList.clear();'));
       expect(replaceSourceBlock, contains('await _playList.add'));
     });
 
@@ -256,24 +270,20 @@ void main() {
       },
     );
 
-    test(
-      'repeat completion restarts the current source from the beginning',
-      () {
-        final listenerBlock = _methodBlock(source, '_handlePlaybackCompleted');
-        final repeatBlock = _methodBlock(source, '_repeatCurrentSongFromStart');
-        final startPlaybackBlock = _methodBlock(source, '_startPlayerPlayback');
+    test('repeat completion is owned only by the native loop mode', () {
+      final listenerBlock = _methodBlock(source, '_handlePlaybackCompleted');
+      final scheduleBlock = _methodBlock(source, '_scheduleCompletionHandling');
 
-        expect(listenerBlock, contains('await _repeatCurrentSongFromStart();'));
-        expect(listenerBlock, contains('return;'));
-        expect(
-          repeatBlock,
-          contains('await _player.seek(Duration.zero, index: 0);'),
-        );
-        expect(repeatBlock, contains('_startPlayerPlayback();'));
-        expect(startPlaybackBlock, contains('unawaited('));
-        expect(startPlaybackBlock, contains('_player.play().catchError'));
-      },
-    );
+      expect(listenerBlock, contains('if (loopModeEnabled)'));
+      expect(listenerBlock, contains('return;'));
+      expect(listenerBlock, isNot(contains('_player.seek(')));
+      expect(listenerBlock, isNot(contains('_repeatCurrentSongFromStart')));
+      expect(scheduleBlock, contains('if (loopModeEnabled) return;'));
+      expect(
+        source,
+        isNot(contains('Future<void> _repeatCurrentSongFromStart')),
+      );
+    });
 
     test('restores saved repeat mode to the underlying player on init', () {
       final block = _methodBlock(source, '_init');
@@ -707,16 +717,16 @@ int _methodBodyStart(String source, int methodStart) {
 }
 
 bool _usesClassicOneSongSourceFlow(String block) {
-  final stopIndex = block.indexOf('await _player.stop();');
-  final clearIndex = block.indexOf('await _playList.clear();');
-  if (stopIndex == -1 || clearIndex == -1 || stopIndex > clearIndex)
-    return false;
+  final clearIndex = block.indexOf(
+    'await _clearCurrentSourceForReplacement();',
+  );
+  if (clearIndex == -1) return false;
 
   final addIndex = block.indexOf('await _playList.add', clearIndex);
   if (addIndex == -1) return false;
 
   final loadStartIndex = block.indexOf(
-    'await _loadCurrentSourceFromStartAndPlay();',
+    'await _loadCurrentSourceFromStartAndPlay(',
     addIndex,
   );
 
@@ -725,7 +735,7 @@ bool _usesClassicOneSongSourceFlow(String block) {
 
 bool _loadsThenClearsLoadingThenEmitsStarted(String block) {
   final loadStartIndex = block.indexOf(
-    'await _loadCurrentSourceFromStartAndPlay();',
+    'await _loadCurrentSourceFromStartAndPlay(',
   );
   if (loadStartIndex == -1) return false;
 

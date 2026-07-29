@@ -81,16 +81,15 @@ void main() {
       required String? currentValue,
       required Future<bool> Function(String) probe,
       String? sourceSupportDir = prodSupportDir,
-    }) =>
-        validateRestoredLocationSetting(
-          currentValue: currentValue,
-          sourceSupportDir: sourceSupportDir,
-          supportDirPath: supportDirPath,
-          isUsableDirectory: probe,
-          persist: (value) async => persisted.add(value),
-          reset: () async => resetCalls++,
-          settingName: 'test location',
-        );
+    }) => validateRestoredLocationSetting(
+      currentValue: currentValue,
+      sourceSupportDir: sourceSupportDir,
+      supportDirPath: supportDirPath,
+      isUsableDirectory: probe,
+      persist: (value) async => persisted.add(value),
+      reset: () async => resetCalls++,
+      settingName: 'test location',
+    );
 
     test('keeps a usable external directory untouched', () async {
       await validate(
@@ -102,16 +101,18 @@ void main() {
       expect(resetCalls, 0);
     });
 
-    test('rewrites and persists a usable in-app path from the source install',
-        () async {
-      await validate(
-        currentValue: '$prodSupportDir/Music',
-        probe: (path) async => path == '$supportDirPath/Music',
-      );
+    test(
+      'rewrites and persists a usable in-app path from the source install',
+      () async {
+        await validate(
+          currentValue: '$prodSupportDir/Music',
+          probe: (path) async => path == '$supportDirPath/Music',
+        );
 
-      expect(persisted, ['$supportDirPath/Music']);
-      expect(resetCalls, 0);
-    });
+        expect(persisted, ['$supportDirPath/Music']);
+        expect(resetCalls, 0);
+      },
+    );
 
     test('resets when the directory is missing or unwritable', () async {
       await validate(
@@ -146,15 +147,18 @@ void main() {
     late String serviceSource;
 
     setUpAll(() {
-      serviceSource =
-          File('lib/services/backup/restore_service.dart').readAsStringSync();
+      serviceSource = File(
+        'lib/services/backup/restore_service.dart',
+      ).readAsStringSync();
     });
 
     test('settings are validated after the path rewrites', () {
-      final libraryRewriteIndex =
-          serviceSource.indexOf('await rewriteRestoredLibraryPaths(');
-      final validateIndex =
-          serviceSource.indexOf('_validateRestoredSettingsPaths(');
+      final libraryRewriteIndex = serviceSource.indexOf(
+        'await rewriteRestoredLibraryPaths(',
+      );
+      final validateIndex = serviceSource.indexOf(
+        '_validateRestoredSettingsPaths(',
+      );
       expect(libraryRewriteIndex, greaterThan(-1));
       expect(validateIndex, greaterThan(libraryRewriteIndex));
     });

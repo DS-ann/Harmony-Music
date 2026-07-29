@@ -11,8 +11,7 @@ void main() {
         buildNumber: '42',
         platform: 'android',
         sourceSupportDir: '/data/user/0/com.anandnet.harmonymusic.prod/files',
-        sourceDbDir:
-            '/data/user/0/com.anandnet.harmonymusic.prod/app_flutter',
+        sourceDbDir: '/data/user/0/com.anandnet.harmonymusic.prod/app_flutter',
         sourceMusicDir:
             '/data/user/0/com.anandnet.harmonymusic.prod/files/Music',
         includesAudio: true,
@@ -32,15 +31,23 @@ void main() {
       expect(parsed.appVersion, '1.2.3');
       expect(parsed.buildNumber, '42');
       expect(parsed.platform, 'android');
-      expect(parsed.sourceSupportDir,
-          '/data/user/0/com.anandnet.harmonymusic.prod/files');
-      expect(parsed.sourceDbDir,
-          '/data/user/0/com.anandnet.harmonymusic.prod/app_flutter');
-      expect(parsed.sourceMusicDir,
-          '/data/user/0/com.anandnet.harmonymusic.prod/files/Music');
+      expect(
+        parsed.sourceSupportDir,
+        '/data/user/0/com.anandnet.harmonymusic.prod/files',
+      );
+      expect(
+        parsed.sourceDbDir,
+        '/data/user/0/com.anandnet.harmonymusic.prod/app_flutter',
+      );
+      expect(
+        parsed.sourceMusicDir,
+        '/data/user/0/com.anandnet.harmonymusic.prod/files/Music',
+      );
       expect(parsed.includesAudio, isTrue);
-      expect(parsed.audioEntries['song (2).m4a'],
-          '/storage/emulated/0/Music/song.m4a');
+      expect(
+        parsed.audioEntries['song (2).m4a'],
+        '/storage/emulated/0/Music/song.m4a',
+      );
     });
 
     test('returns null for malformed JSON', () {
@@ -51,10 +58,7 @@ void main() {
 
     test('returns null when formatVersion is missing or wrong-typed', () {
       expect(BackupManifest.fromJsonString('{}'), isNull);
-      expect(
-        BackupManifest.fromJsonString('{"formatVersion": "1"}'),
-        isNull,
-      );
+      expect(BackupManifest.fromJsonString('{"formatVersion": "1"}'), isNull);
     });
 
     test('ignores unknown keys and tolerates wrong-typed fields', () {

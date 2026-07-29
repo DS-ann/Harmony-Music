@@ -8,6 +8,7 @@ import '../../services/listen_together/hybrid_transport.dart';
 import '../../services/listen_together/nearby_transport.dart';
 import '../../services/listen_together/listen_together_controller.dart';
 import '../../services/listen_together/sync_transport.dart';
+import '../../services/cloud/cloud_playback_receiver.dart';
 import '../../utils/system_tray.dart';
 import '../../utils/runtime_platform.dart';
 import '../../data/repositories/listen_together_preferences.dart';
@@ -43,6 +44,18 @@ final ChangeNotifierProvider<PlayerController> playerControllerProvider =
       unawaited(controller.init());
       return controller;
     });
+
+final cloudPlaybackReceiverProvider = Provider<CloudPlaybackReceiver>((ref) {
+  final receiver = CloudPlaybackReceiver(
+    ref.read(cloudSyncCoordinatorProvider),
+    ref.read(songMetadataServiceProvider),
+    ref.read(playbackCommandServiceProvider),
+    ref.read(playbackSocketClientProvider),
+    ref.read(playerControllerProvider),
+  );
+  ref.onDispose(receiver.dispose);
+  return receiver;
+});
 
 final ChangeNotifierProvider<ListenTogetherController>
 listenTogetherControllerProvider =
@@ -90,6 +103,7 @@ final librarySongsControllerProvider =
         downloadRepository: ref.watch(downloadRepositoryProvider),
         libraryRepository: ref.watch(libraryRepositoryProvider),
         songCacheRepository: ref.watch(songCacheRepositoryProvider),
+        settingsRepository: ref.watch(settingsRepositoryProvider),
       );
       LibrarySongsControllerRegistry.register(controller);
       unawaited(controller.init());

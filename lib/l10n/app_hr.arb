@@ -385,21 +385,42 @@
   "resolverPlaybackFailed": "Pjesmu nije moguće učitati ni iz jednog izvora. Provjerite vezu i pokušajte ponovno.",
   "cloudBackup": "Harmony Cloud sigurnosna kopija",
   "cloudBackupDescription": "Sigurno sinkronizira biblioteku, postavke i popis preuzetih pjesama.",
-  "cloudBackupPrompt": "Želite li sigurnosno kopirati Harmony podatke i sinkronizirati ih između uređaja?",
-  "cloudBackupEnable": "Uključi backup",
+  "cloudDataSync": "Sinkronizacija podataka u oblaku",
+  "cloudDataSyncDescription": "Sinkronizirajte biblioteku, playliste, sviđanja i sigurne postavke između uređaja.",
+  "deviceControl": "Upravljanje uređajem",
+  "deviceControlDescription": "Ovaj prijavljeni uređaj dostupan je vašem Harmony računu.",
+  "cloudBackupPrompt": "Želite li sinkronizirati Harmony biblioteku, playliste, sviđanja i sigurne postavke između uređaja?",
+  "cloudBackupEnable": "Uključi sinkronizaciju podataka",
   "cloudBackupNotNow": "Ne sada",
-  "cloudBackupNow": "Sada sigurnosno kopiraj preuzete pjesme",
-  "cloudBackupInProgress": "Izrađuje se sigurnosna kopija preuzetih pjesama…",
-  "cloudBackupComplete": "Sigurnosna kopija preuzetih pjesama je dovršena.",
-  "cloudBackupWifiRequired": "Povežite se na Wi-Fi za sigurnosnu kopiju preuzetih pjesama.",
-  "cloudBackupFailed": "Izrada sigurnosne kopije nije uspjela. Pokušajte ponovno.",
-  "cloudBackupAuthenticationRequired": "Ponovno se prijavite prije sigurnosnog kopiranja preuzetih pjesama.",
-  "cloudBackupPermissionDenied": "Sigurnosno kopiranje u oblak još nije odobreno za ovaj račun.",
-  "cloudBackupServiceUnavailable": "Usluga sigurnosnog kopiranja u oblak trenutačno nije dostupna. Pokušajte kasnije.",
-  "cloudBackupNetworkFailure": "Sigurnosno kopiranje u oblak ne može dosegnuti uslugu. Provjerite vezu.",
-  "cloudBackupLowBatteryTitle": "Baterija je pri kraju",
-  "cloudBackupLowBatteryMessage": "Baterija je ispod 50 %. Izrada sigurnosne kopije preuzetih pjesama može potrošiti mnogo energije.",
-  "cloudBackupAnyway": "Svejedno izradi kopiju",
   "shareAndroidApp": "Podijeli Harmony Music",
   "shareAndroidAppDescription": "Podijelite izravnu poveznicu na najnoviji Android APK."
+  ,"playOnDevice": "Reproduciraj na uređaju"
+  ,"noOtherDevices": "Nema drugih dostupnih prijavljenih Harmony uređaja."
+  ,"deviceUnavailable": "Nedostupno"
+  ,"deviceBackground": "Dostupno u pozadini"
+  ,"deviceOnline": "Na mreži"
+  ,"handoffRequested": "Zatražen je prijenos reprodukcije."
+  ,"deviceControlUnavailable": "Upravljanje uređajem trenutačno nije dostupno. Pokušajte kasnije."
+  ,"cloudPlaybackReconnecting": "Ponovno povezivanje…"
+  ,"tapToLeaveSync": "Sinkronizirano — dodirni za prekid"
+  ,"debugRefreshAuthToken": "Osvježi Auth0 token"
+  ,"debugRefreshAuthTokenDescription": "Samo za debug: tiho zatraži novi token za prijavu."
+  ,"debugAuthTokenRefreshed": "Auth0 token je osvježen."
+  ,"debugAuthTokenRefreshFailed": "Auth0 token se nije mogao osvježiti. Prijavite se ponovno."
+  ,"filter": "Filtar"
+  ,"showDownloadsNotInLibrary": "Prikaži preuzimanja izvan tvoje biblioteke"
+  ,"includeCachedSongs": "Uključi predmemorirane pjesme"
+  ,"songsFilteredToLibrary": "Pjesme prikazuju preuzimanja koja su u tvojoj biblioteci. Nijedno preuzimanje još nije označeno kao voljeno."
+  ,"showAllDownloads": "Prikaži sva preuzimanja"
+  ,"downloadNotInLibraryTitle": "Ova pjesma nije u tvojoj biblioteci"
+  ,"downloadNotInLibraryMessage": "Pjesme prikazuju preuzimanja koja su u tvojoj biblioteci. Ako je svejedno preuzmeš, ostaje na ovom uređaju, ali se neće pojaviti ondje dok je ne označiš kao voljenu."
+  ,"likeAndDownload": "Označi i preuzmi"
+  ,"downloadOnly": "Samo preuzmi"
+  ,"dontAskAgain": "Ne pitaj više"
+  ,"existingLibraryTitle": "Glazba već postoji na ovom uređaju"
+  ,"existingLibraryMessage": "Ovaj uređaj ima biblioteku koja još nije povezana ni s jednim računom. Dodaj je svom računu ili je zamijeni bibliotekom koja je već na računu. Preuzete datoteke ostaju u oba slučaja."
+  ,"mergeIntoAccount": "Dodaj mom računu"
+  ,"replaceWithAccountLibrary": "Koristi biblioteku računa"
+  ,"sessionExpiredMessage": "Odjavljen si. Sinkronizacija je pauzirana dok se ponovno ne prijaviš."
+  ,"dismiss": "Odbaci"
 }

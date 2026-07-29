@@ -201,11 +201,7 @@ class BackupService {
           if (entry.storeUncompressed) {
             await _addStoredFile(encoder, file, entry.archiveName);
           } else {
-            await encoder.addFile(
-              file,
-              entry.archiveName,
-              ZipFileEncoder.gzip,
-            );
+            await encoder.addFile(file, entry.archiveName, ZipFileEncoder.gzip);
           }
         } catch (e) {
           if (!await file.exists()) {

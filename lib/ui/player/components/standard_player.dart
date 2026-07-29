@@ -11,6 +11,7 @@ import '../../screens/listen_together/listen_together_sheet.dart';
 import '../../widgets/awaitable_button.dart';
 import '../../widgets/toggle_icon_button.dart';
 import '../../widgets/song_info_bottom_sheet.dart';
+import '../../widgets/cloud_devices_sheet.dart';
 import 'album_art_lyrics.dart';
 import 'background_image.dart';
 import 'lyrics_switch.dart';
@@ -236,6 +237,12 @@ class StandardPlayer extends ConsumerWidget {
                       },
                     );
                   },
+                ),
+
+                IconButton(
+                  tooltip: context.l10n.playOnDevice,
+                  icon: const Icon(Icons.devices_other_outlined, size: 25),
+                  onPressed: () => showCloudDevicesSheet(context),
                 ),
 
                 /// More button for current song context

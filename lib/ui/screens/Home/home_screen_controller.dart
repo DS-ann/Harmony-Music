@@ -71,7 +71,14 @@ class HomeScreenController extends ChangeNotifier {
     await _maybeShowReleasePrompt();
     if (updateCheckFlag) {
       _checkNewVersion();
-    } else if (kDebugMode) {
+    } else if (kDebugMode && isStartupUpdatePopupEnabled()) {
+      // A debug-only preview of the real dialog, since updateCheckFlag is off
+      // in local builds. It bypassed the "don't show update popup" setting
+      // that governs the real check above — harmless for a developer who
+      // hasn't touched that setting, but it means anything booting the app
+      // repeatedly in the same process (integration tests) gets an
+      // unstoppable dialog no override can reach, popping at whatever moment
+      // its postFrameCallback happens to land.
       _showDebugUpdateDialog();
     }
   }
