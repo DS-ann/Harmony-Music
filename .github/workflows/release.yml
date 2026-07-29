@@ -44,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
-        with: { channel: stable, flutter-version: 3.44.1 }
+        with: { channel: stable, flutter-version: 3.44.1, cache: true }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       - name: Configure public Auth0 client settings
@@ -88,7 +88,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
-        with: { channel: stable, flutter-version: 3.44.1 }
+        with: { channel: stable, flutter-version: 3.44.1, cache: true }
       - name: Configure public Auth0 client settings
         shell: pwsh
         env:
@@ -102,23 +102,23 @@ jobs:
       - run: flutter pub get
       - shell: pwsh
         run: Set-Content lib/utils/update_check_flag_file.dart 'const updateCheckFlag = true;'
-      - name: Cache vcpkg packages
+      - name: Cache vcpkg toolchain and packages
         uses: actions/cache@v4
         with:
-          # ${{ env.* }} is resolved before the runner starts, so it can only see
-          # env vars this workflow set explicitly — not the runner machine's own
-          # environment. `~` is expanded by actions/cache itself once it's
-          # running on the runner, where it correctly means the user profile dir.
-          path: |
-            C:\vcpkg-pinned\installed
-            ~\AppData\Local\vcpkg\archives
+          # The whole tree, not just 'installed'. Caching only the subdirectory
+          # meant a cache hit created C:\vcpkg-pinned *without* vcpkg.exe in it,
+          # and git clone refuses to clone into a non-empty directory — so every
+          # cache hit hard-failed the job. Caching the clone target itself keeps
+          # hit and miss symmetric: on a hit everything is present and the step
+          # below is a no-op, on a miss the directory does not exist at all.
+          path: C:\vcpkg-pinned
           # Deliberately not hashFiles('windows/CMakeLists.txt'): that file
           # changes for reasons that have nothing to do with which vcpkg ports
           # are needed (it already busted this cache once, turning an unrelated
           # one-line fix into another ~13-minute from-scratch vcpkg build). The
           # pinned tag and port list are spelled out in the key itself — bump
           # this key by hand if either one ever actually changes.
-          key: vcpkg-2026.06.01-x64-windows-cpprestsdk-openssl-boost-v1
+          key: vcpkg-2026.06.01-x64-windows-cpprestsdk-openssl-boost-v2
       - name: Install vcpkg dependencies for auth0_flutter
         shell: pwsh
         # windows-latest's preinstalled C:\vcpkg tracks vcpkg's current registry,
@@ -131,16 +131,13 @@ jobs:
         # never installed anything, so 'flutter build windows' failed before
         # ever reaching signing or packaging.)
         run: |
-          # Checking for vcpkg.exe specifically, not just the directory: the
-          # cache step above only restores the 'installed' subfolder, so a
-          # cache hit alone creates C:\vcpkg-pinned without vcpkg.exe ever
-          # being cloned into it.
           if (!(Test-Path C:\vcpkg-pinned\vcpkg.exe)) {
             git clone --depth 1 --branch 2026.06.01 https://github.com/microsoft/vcpkg.git C:\vcpkg-pinned
             if ($LASTEXITCODE -ne 0) { throw "git clone vcpkg failed with exit code $LASTEXITCODE" }
             & C:\vcpkg-pinned\bootstrap-vcpkg.bat -disableMetrics
             if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed with exit code $LASTEXITCODE" }
           }
+          # A no-op that exits 0 when the cache already provided these.
           & C:\vcpkg-pinned\vcpkg.exe install cpprestsdk:x64-windows openssl:x64-windows boost-system:x64-windows boost-date-time:x64-windows boost-regex:x64-windows
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
       - name: Build and package installer

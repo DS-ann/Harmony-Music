@@ -20,6 +20,9 @@ jobs:
         with:
           channel: stable
           flutter-version: '3.44.1'
+          # The SDK is a ~1.5 GB download that was being re-fetched on every
+          # run of every workflow.
+          cache: true
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
