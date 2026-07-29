@@ -144,6 +144,13 @@ jobs:
           ISSUE_REPORT_ENDPOINT: ${{ secrets.ISSUE_REPORT_ENDPOINT }}
           RESOLVER_PRODUCTION_BASE_URL: ${{ vars.RESOLVER_PRODUCTION_BASE_URL }}
           VCPKG_ROOT: C:\vcpkg-pinned
+          # The vendored firebase_cpp_sdk_windows (pulled in transitively for
+          # FCM) ships a CMakeLists.txt with cmake_minimum_required < 3.5, which
+          # CMake 4 refuses to configure at all rather than just warn about —
+          # this is CMake's own documented escape hatch for exactly that case,
+          # not something fixable from this repo since the file is extracted
+          # from a third-party archive at build time.
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           if (!$env:ISSUE_REPORT_ENDPOINT -or !$env:RESOLVER_PRODUCTION_BASE_URL) { throw 'Missing Windows release configuration' }
           choco install innosetup -y --no-progress
