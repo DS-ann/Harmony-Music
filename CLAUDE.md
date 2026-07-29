@@ -55,17 +55,22 @@ Out of scope regardless: `adb install`/`uninstall`, `adb shell am start`/`am for
 starts, stops, installs, or mutates the app or the device. If a log needs the app relaunched
 or a step reproduced, ask the user to do it and say exactly what to do.
 
-**Narrow exception: `flutter test integration_test/...` on a dedicated, disposable AVD.**
+**Narrow exception: `flutter test integration_test/...` on the dedicated `claude_integration_test` AVD.**
 Jan granted this on 2026-07-28 specifically so `integration_test/` suites can be verified
 end-to-end instead of only analyzer-checked, after a `flutter test -d windows` run surfaced
 that Windows integration runs launch the real installed build with real account data — a
 device that must never be touched this way.
 
-This exception covers only an Android Virtual Device created solely for this purpose (e.g.
-named with a `claude-` prefix), never installed with a real account, never reused as a manual
-testing device, and deleted (`avdmanager delete avd`) once the run is done. In scope, on that
-AVD only: `avdmanager create avd`, launching the emulator, `flutter test integration_test/...`,
-`adb uninstall`/wiping that same AVD, and `avdmanager delete avd` to tear it down.
+The AVD `claude_integration_test` already exists and is kept between sessions (Jan asked for
+it to stay, 2026-07-29) — reuse it rather than creating a new one, and do not delete it. It is
+for automated runs only: never sign a real account into it, never use it as a manual testing
+device. In scope, on that AVD only: launching the emulator, `flutter test integration_test/...`,
+and `adb uninstall`/wiping that same AVD. Recreate it with `avdmanager create avd` only if it
+is missing.
+
+If it starts behaving strangely — tests timing out, a file that ran in 30s taking minutes,
+assertions failing that passed earlier — restart the emulator before hunting for a code
+regression. A long-lived instance degrades, and that has already cost a debugging detour once.
 
 Still completely out of scope, no exception: the user's own AVDs (e.g. `Medium_Phone`), any
 physical device, the Windows build, and `flutter run`/`attach`/`install`/`drive` anywhere. If
