@@ -214,5 +214,19 @@ jobs:
             git config user.email 41898282+github-actions[bot]@users.noreply.github.com
             git tag -f main-latest "$GITHUB_SHA"
             git push origin refs/tags/main-latest --force
-            gh release create main-latest release-assets/* --title 'Main latest candidate' --notes "Rolling Android and Windows candidate.\n\nBuild SHA: $GITHUB_SHA" --prerelease --target "$GITHUB_SHA" || gh release upload main-latest release-assets/* --clobber
+            # printf, not an inline "\n": inside double quotes bash leaves \n
+            # as a literal backslash-n, which is how the old release body ended
+            # up reading "candidate.\n\nBuild SHA:" on one line.
+            notes="$(printf 'Rolling Android and Windows candidate.\n\nBuild SHA: %s\nRun number: %s' "$GITHUB_SHA" "$GITHUB_RUN_NUMBER")"
+            # The release already exists after the first rolling build, so
+            # create always fails from then on. The old fallback only uploaded
+            # assets, leaving the title/notes frozen at whatever the very first
+            # run wrote — and the in-app rolling update check parses its "Build
+            # SHA:" out of those notes, so every later build published new
+            # binaries while still advertising the original commit. Devices on
+            # the rolling channel were told they were up to date indefinitely.
+            if ! gh release create main-latest release-assets/* --title 'Main latest candidate' --notes "$notes" --prerelease --target "$GITHUB_SHA"; then
+              gh release edit main-latest --title 'Main latest candidate' --notes "$notes" --prerelease --target "$GITHUB_SHA"
+              gh release upload main-latest release-assets/* --clobber
+            fi
           fi
