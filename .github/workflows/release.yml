@@ -101,7 +101,8 @@ jobs:
           cat signer-certs.txt
 
           expected_signer="b12ca7ee8a05a9e88e13714cfe8124b96112f0d8b56d19a62ef6233aa22e0793"
-          if ! grep -Fq "Signer #1 certificate SHA-256 digest: $expected_signer" signer-certs.txt; then
+          actual_signers="$(sed -n 's/^.*certificate SHA-256 digest: //p' signer-certs.txt)"
+          if [ "$actual_signers" != "$expected_signer" ]; then
             echo "::error::APK signer does not match the certificate used by stable releases v6.0.0-v6.0.2."
             exit 1
           fi
