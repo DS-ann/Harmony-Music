@@ -134,7 +134,7 @@ abstract class AuthServiceContract {
   /// signed in from this method's point of view).
   Future<UserProfile?> tryRestoreSession();
 
-  Future<UserProfile> login();
+  Future<UserProfile> login({bool chooseAccount = false});
 
   Future<void> logout();
 

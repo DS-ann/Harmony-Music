@@ -13,13 +13,27 @@ import '../crash_diagnostics_service.dart';
 /// all — it must never fail silently.
 enum PlaybackSocketStatus { disconnected, connecting, connected }
 
+abstract interface class PlaybackSocketTransport {
+  Stream<Map<String, dynamic>> get frames;
+
+  Stream<PlaybackSocketStatus> get status;
+
+  PlaybackSocketStatus get currentStatus;
+
+  Future<void> connect(String deviceId);
+
+  void send(Map<String, Object?> frame);
+
+  Future<void> dispose();
+}
+
 /// The single realtime channel to Harmony Cloud.
 ///
 /// Replaces a 1s REST poll of `GET /playback/session` plus
 /// `GET /playback/commands` on every device. Auth rides on the standard
 /// `Authorization` header of the upgrade request, which dart:io sockets support,
 /// so no token ever appears in a URL.
-class PlaybackSocketClient {
+class PlaybackSocketClient implements PlaybackSocketTransport {
   PlaybackSocketClient({
     required Future<String?> Function() accessToken,
     required String baseUrl,

@@ -73,6 +73,7 @@ void main() {
       await tapLoginButton(tester);
 
       expect(find.text('Music already on this device'), findsNothing);
+      expect(auth.lastChooseAccount, isFalse);
       expect(
         handle.container
             .read(settingsRepositoryProvider)
@@ -81,6 +82,22 @@ void main() {
       );
     },
   );
+
+  testWidgets('Use another account requests a fresh provider account chooser', (
+    tester,
+  ) async {
+    final auth = FakeAuthService()
+      ..nextLogin = testUserProfile(sub: 'auth0|user-2');
+    await bootTestApp(tester, authService: auth);
+
+    await openSettings(tester);
+    await tester.tap(find.text('Use another account'));
+    await pumpFrames(tester);
+
+    expect(auth.loginCallCount, 1);
+    expect(auth.lastChooseAccount, isTrue);
+    expect(find.text('Music already on this device'), findsNothing);
+  });
 
   testWidgets(
     'first sign-in with a local library shows the merge/replace dialog',

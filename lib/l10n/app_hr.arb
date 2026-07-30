@@ -282,6 +282,7 @@
   "authUnsupportedPlatform": "Prijava na račun nije podržana na ovoj platformi.",
   "loggedInAs": "Prijavljeni kao",
   "loginOrRegister": "Prijava / Registracija",
+  "useAnotherAccount": "Koristi drugi račun",
   "logout": "Odjava",
   "library": "Biblioteka",
   "createNewPlaylist": "Izradi novi popis za reprodukciju",

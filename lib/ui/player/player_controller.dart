@@ -20,6 +20,7 @@ import '../../services/listen_together/listen_together_gate.dart';
 import '../../services/listen_together/session_message.dart';
 import '../../services/listen_together/session_payload.dart';
 import '../../services/cloud/playback_socket_client.dart';
+import '../../services/cloud/playback_modes.dart';
 import '../../services/playback_command_service.dart';
 import '../../services/previous_track_policy.dart';
 import '../../utils/runtime_platform.dart';
@@ -140,6 +141,18 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
     final song = currentSong.value;
     if (song == null) return false;
     return MediaItemBuilder.isResolving(song) || song.title.trim().isEmpty;
+  }
+
+  /// True while an online song has been selected but its first playable frame
+  /// has not arrived yet. Artwork uses this narrower state for its shimmer so
+  /// an ordinary mid-song rebuffer does not hide an image we already have.
+  bool get isCurrentOnlineSongInitiallyLoading {
+    final song = currentSong.value;
+    if (song == null) return false;
+    final sourceUrl = song.extras?['url']?.toString() ?? '';
+    final isOnline = !sourceUrl.contains('file');
+    return isOnline &&
+        (_isWaitingForCurrentSourceStart || _currentSongResolving);
   }
 
   int? beginRemoteSongTransition(List<MediaItem> queue, int index) {
@@ -334,6 +347,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   /// visibly step rather than sweep.
   void applyRemoteProgress(Map<String, dynamic> progress) {
     _cloudRemoteStateActive = true;
+    applyRemotePlaybackModes(CloudPlaybackModes.fromMap(progress));
     final songId = progress['currentSongId']?.toString();
     final pendingSongId = _pendingRemoteSongId;
     if (pendingSongId != null && songId != pendingSongId) {
@@ -424,6 +438,40 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       position: Duration(milliseconds: positionMs < 0 ? 0 : positionMs),
     );
     _notifyPlayerChanged();
+  }
+
+  /// Mirrors the active account session's modes without sending commands back
+  /// to its audio target.
+  ///
+  /// The controller's local audio handler remains parked while mirroring, but
+  /// the preferences are updated now so the session modes survive disconnect.
+  void applyRemotePlaybackModes(CloudPlaybackModes modes) {
+    if (!modes.hasAny) return;
+    var changed = false;
+    final writes = <Future<void>>[];
+    if (modes.shuffle case final enabled?) {
+      if (isShuffleModeEnabled.value != enabled) {
+        isShuffleModeEnabled.value = enabled;
+        changed = true;
+      }
+      writes.add(_settingsRepository.setShuffleModeEnabled(enabled));
+    }
+    if (modes.repeat case final enabled?) {
+      if (isLoopModeEnabled.value != enabled) {
+        isLoopModeEnabled.value = enabled;
+        changed = true;
+      }
+      writes.add(_settingsRepository.setLoopModeEnabled(enabled));
+    }
+    if (modes.queueLoop case final enabled?) {
+      if (isQueueLoopModeEnabled.value != enabled) {
+        isQueueLoopModeEnabled.value = enabled;
+        changed = true;
+      }
+      writes.add(_settingsRepository.setQueueLoopModeEnabled(enabled));
+    }
+    if (writes.isNotEmpty) unawaited(Future.wait(writes));
+    if (changed) _notifyPlayerChanged();
   }
 
   void _syncRemoteMediaNotification(
@@ -1014,23 +1062,36 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   }
 
   void _listenForChangesInPlayerState() {
-    _audioHandler.playbackState.listen((playerState) {
+    final playerStateSubscription = _audioHandler.playbackState.listen((
+      playerState,
+    ) {
       if (_cloudRemoteStateActive) return;
       final isPlaying = playerState.playing;
       final processingState = playerState.processingState;
       _reflectExternalRepeatShuffleChanges(playerState);
+      if (!_isWaitingForCurrentSourceStart &&
+          isPlaying &&
+          processingState == AudioProcessingState.buffering &&
+          _isInsideSourceStartGuard(playerState.updatePosition)) {
+        _restorePendingSourceStartFromGuard();
+      }
       if (_isWaitingForCurrentSourceStart &&
           processingState != AudioProcessingState.ready) {
         _pendingSourceTransitionObserved = true;
       }
+      // A playing source can briefly report ready at its requested position
+      // before falling back to buffering. Only a real position tick proves it
+      // started; clearing here would release the timer and rebuffer grace too
+      // early. A restored paused source cannot produce such a tick, so it is
+      // the one state-only transition that completes immediately.
       if (_isWaitingForCurrentSourceStart &&
-          (_isReadySourceStart(playerState) ||
-              _isReadyPausedPendingSource(playerState))) {
+          _isReadyPausedPendingSource(playerState)) {
         _clearPendingSourceStart();
       }
       if (processingState == AudioProcessingState.completed ||
           processingState == AudioProcessingState.error) {
         _clearPendingSourceStart();
+        _clearSourceStartGuard();
       }
 
       final immediateLoading =
@@ -1066,6 +1127,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
           processingState != AudioProcessingState.idle;
       _setPlaybackWakeLock(shouldHoldPlaybackWakeLock);
     });
+    _observableSubscriptions.add(playerStateSubscription);
   }
 
   /// Mirror repeat/shuffle changes made by external media controllers (car
@@ -1194,7 +1256,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   }
 
   void _listenForChangesInPosition() {
-    AudioService.position.listen((position) {
+    final positionSubscription = AudioService.position.listen((position) {
       if (_cloudRemoteStateActive) return;
       // Android can keep emitting the previous just_audio source's position
       // while an incoming cloud song is still resolving. The placeholder has
@@ -1203,12 +1265,14 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       if (_isWaitingForCurrentSourceStart) {
         final playbackState = _audioHandler.playbackState.value;
         if (!_isReadySourceStart(playbackState) ||
-            !_isSourceStartPosition(position)) {
+            !_isSourceStartPosition(position) ||
+            !_hasSourcePlaybackProgress(position)) {
           return;
         }
         _clearPendingSourceStart();
         _setButtonState(PlayButtonState.playing);
       }
+      _clearSourceStartGuardIfPast(position);
       final oldState = progressBarStatus.value;
       final clampedPosition = _clampProgressPosition(position, oldState.total);
       if (isSleepEndOfSongActive.value) {
@@ -1226,25 +1290,22 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       });
       lyricController.setProgress(clampedPosition);
     });
+    _observableSubscriptions.add(positionSubscription);
   }
 
   void _listenForChangesInBufferedPosition() {
-    _audioHandler.playbackState.listen((playbackState) async {
+    final bufferedPositionSubscription = _audioHandler.playbackState.listen((
+      playbackState,
+    ) async {
       if (_cloudRemoteStateActive) return;
       if (_currentSongResolving) return;
       final oldState = progressBarStatus.value;
-      final startedPendingSource =
-          _isWaitingForCurrentSourceStart && _isReadySourceStart(playbackState);
-      if (_isWaitingForCurrentSourceStart && !startedPendingSource) return;
+      // Loading/buffer events may contain an extrapolated position for a source
+      // that has not produced audio yet. The position stream is the sole owner
+      // of completing a playing source transition.
+      if (_isWaitingForCurrentSourceStart) return;
 
-      if (startedPendingSource) {
-        _clearPendingSourceStart();
-        _setButtonState(PlayButtonState.playing);
-      }
-
-      final currentPosition = startedPendingSource
-          ? _clampProgressPosition(playbackState.updatePosition, oldState.total)
-          : oldState.current;
+      final currentPosition = oldState.current;
       final bufferedPosition = _clampProgressPosition(
         playbackState.bufferedPosition,
         oldState.total,
@@ -1254,9 +1315,6 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
         val.current = currentPosition;
         val.total = oldState.total;
       });
-      if (startedPendingSource) {
-        lyricController.setProgress(currentPosition);
-      }
 
       if (progressBarStatus.value.total.inSeconds != 0 &&
           playbackState.bufferedPosition.inSeconds /
@@ -1270,16 +1328,20 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
         }
       }
     });
+    _observableSubscriptions.add(bufferedPositionSubscription);
   }
 
   void _listenForChangesInDuration() {
-    _audioHandler.mediaItem.listen((mediaItem) async {
+    final mediaItemSubscription = _audioHandler.mediaItem.listen((
+      mediaItem,
+    ) async {
       // While mirroring a remote target this device's own handler is idle; any
       // event from it would overwrite the mirrored song and zero the bar.
       if (_cloudRemoteStateActive) return;
       if (mediaItem == null || !isDisplayableSong(mediaItem)) {
         currentSong.value = null;
         _clearPendingSourceStart();
+        _clearSourceStartGuard();
         progressBarStatus.update((val) {
           val.total = Duration.zero;
           val.current = Duration.zero;
@@ -1340,6 +1402,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
       unawaited(_updateCurrentSongSideEffects(mediaItem));
     });
+    _observableSubscriptions.add(mediaItemSubscription);
   }
 
   Duration _clampProgressPosition(Duration position, Duration total) {
@@ -1366,6 +1429,10 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
         _sourceStartProgressWindow;
   }
 
+  bool _hasSourcePlaybackProgress(Duration position) {
+    return position > _pendingPlaybackStartPosition;
+  }
+
   bool _isReadySourceStart(PlaybackState playbackState) {
     return _pendingSourceTransitionObserved &&
         playbackState.processingState == AudioProcessingState.ready &&
@@ -1388,7 +1455,43 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
     // Zero unless something told us this source resumes elsewhere.
     _pendingPlaybackStartPosition =
         _expectedSourceStartPosition ?? Duration.zero;
+    _sourceStartGuardSongId = songId;
+    _sourceStartGuardPosition = _pendingPlaybackStartPosition;
     _setButtonState(PlayButtonState.loading);
+  }
+
+  bool _isInsideSourceStartGuard(Duration position) {
+    if (_sourceStartGuardSongId != currentSong.value?.id) return false;
+    final progress = position - _sourceStartGuardPosition;
+    return progress >= Duration.zero && progress <= _sourceStartProgressWindow;
+  }
+
+  void _restorePendingSourceStartFromGuard() {
+    final songId = _sourceStartGuardSongId;
+    if (songId == null || songId != currentSong.value?.id) return;
+    _pendingPlaybackStartSongId = songId;
+    _pendingSourceTransitionObserved = true;
+    _pendingPlaybackStartPosition = _sourceStartGuardPosition;
+    progressBarStatus.update((value) {
+      value.current = _sourceStartGuardPosition;
+      value.buffered = _sourceStartGuardPosition;
+    });
+    lyricController.setProgress(_sourceStartGuardPosition);
+    _cancelBufferingGrace();
+    _setButtonState(PlayButtonState.loading);
+  }
+
+  void _clearSourceStartGuardIfPast(Duration position) {
+    if (_sourceStartGuardSongId != currentSong.value?.id) return;
+    if (position - _sourceStartGuardPosition <= _sourceStartProgressWindow) {
+      return;
+    }
+    _clearSourceStartGuard();
+  }
+
+  void _clearSourceStartGuard() {
+    _sourceStartGuardSongId = null;
+    _sourceStartGuardPosition = Duration.zero;
   }
 
   /// Moves the goalposts when the user seeks before the source ever reported
@@ -1400,6 +1503,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
     if (!_isWaitingForCurrentSourceStart) return;
     _pendingPlaybackStartPosition = position;
     _expectedSourceStartPosition = position;
+    _sourceStartGuardPosition = position;
   }
 
   void _clearPendingSourceStart() {
@@ -1413,6 +1517,8 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   /// audio handler reports the song. Only a resumed source sets this; a normal
   /// tap starts at zero and leaves it null.
   Duration? _expectedSourceStartPosition;
+  String? _sourceStartGuardSongId;
+  Duration _sourceStartGuardPosition = Duration.zero;
 
   Future<void> _updateCurrentSongSideEffects(MediaItem mediaItem) async {
     await _checkFavFor(mediaItem);
@@ -1441,7 +1547,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   }
 
   void _listenForPlaylistChange() {
-    _audioHandler.queue.listen((queue) {
+    final queueSubscription = _audioHandler.queue.listen((queue) {
       // Same reason as _listenForChangesInDuration: a local queue event would
       // replace the mirrored remote queue with this device's idle one.
       if (_cloudRemoteStateActive) return;
@@ -1455,6 +1561,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       }
       _notifyPlayerChanged();
     });
+    _observableSubscriptions.add(queueSubscription);
   }
 
   Future<void> _restorePrevSession() async {
@@ -1477,7 +1584,9 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   }
 
   void _listenForCustomEvents() {
-    _audioHandler.customEvent.listen((event) async {
+    final customEventSubscription = _audioHandler.customEvent.listen((
+      event,
+    ) async {
       if (event['eventType'] == 'playFromMediaId') {
         await _playViaAndroidAuto(event['songId'], event['libraryId']);
       } else if (event['eventType'] == 'playError') {
@@ -1502,6 +1611,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
         }
       }
     });
+    _observableSubscriptions.add(customEventSubscription);
   }
 
   ///pushSongToPlaylist method clear previous song queue, plays the tapped song and push related
@@ -1996,7 +2106,27 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
   Future<void> next() async {
     if (_routeToHost(SessionCommand.next())) return;
-    await _playbackCommands.next();
+    int? remoteTransition;
+    String? desiredVideoId;
+    if (_cloudRemoteStateActive && currentQueue.isNotEmpty) {
+      final currentIndex = currentSongIndex.value;
+      if (currentIndex >= 0 && currentIndex < currentQueue.length) {
+        final nextIndex = currentIndex + 1 < currentQueue.length
+            ? currentIndex + 1
+            : isQueueLoopModeEnabled.value
+            ? 0
+            : currentIndex;
+        if (nextIndex == currentIndex) return;
+        desiredVideoId = currentQueue[nextIndex].id;
+        remoteTransition = beginRemoteSongTransition(currentQueue, nextIndex);
+      }
+    }
+    try {
+      await _playbackCommands.next(desiredVideoId: desiredVideoId);
+    } catch (_) {
+      failRemoteSongTransition(remoteTransition);
+      rethrow;
+    }
   }
 
   void requestNext() {
@@ -2440,6 +2570,11 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
         'speed': playback.speed,
         'errorCode': playback.errorCode,
         'errorMessage': playback.errorMessage,
+      },
+      'remotePlaybackModes': {
+        'shuffle': isShuffleModeEnabled.value,
+        'repeat': isLoopModeEnabled.value,
+        'queueLoop': isQueueLoopModeEnabled.value,
       },
     };
   }

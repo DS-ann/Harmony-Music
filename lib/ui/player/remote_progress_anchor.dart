@@ -22,27 +22,20 @@ class RemoteProgressAnchor {
   final DateTime anchoredAt;
   final double speed;
 
-  /// Largest delivery latency we are willing to credit. Device clocks are not
-  /// synchronised, so a wildly skewed `publishedAtMs` must not catapult the bar
-  /// forward — or, if negative, drag it backwards.
-  static const maximumLatency = Duration(seconds: 5);
-
   factory RemoteProgressAnchor.fromSample({
     required int positionMs,
     required double speed,
     required int? publishedAtMs,
     required DateTime now,
   }) {
-    final latencyMs = publishedAtMs == null
-        ? 0
-        : now.millisecondsSinceEpoch - publishedAtMs;
+    // `publishedAtMs` belongs to the *other* device's wall clock. Android and
+    // Windows commonly differ by hundreds of milliseconds or more, which used
+    // to be mistaken for network delay and made the controlling device visibly
+    // ahead/behind. A received frame is authoritative at receipt time; the
+    // next frame corrects the small, real transport delay.
     return RemoteProgressAnchor(
       position: Duration(milliseconds: positionMs < 0 ? 0 : positionMs),
-      anchoredAt: now.subtract(
-        Duration(
-          milliseconds: latencyMs.clamp(0, maximumLatency.inMilliseconds),
-        ),
-      ),
+      anchoredAt: now,
       // A zero or negative rate would freeze or rewind the bar.
       speed: speed <= 0 ? 1.0 : speed,
     );

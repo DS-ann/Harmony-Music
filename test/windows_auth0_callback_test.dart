@@ -15,6 +15,15 @@ void main() {
     expect(runner, contains('kCallbackPrefix[] = L"harmonymusic://callback"'));
     expect(runner, contains('PLUGIN_STARTUP_URL'));
     expect(runner, contains('CreateNamedPipeW'));
+    expect(runner, contains('RegisterProtocolHandlerIfMissing()'));
+    expect(runner, contains('HasRegisteredProtocolHandler()'));
+    expect(runner, contains('RegGetValueW'));
+    expect(runner, contains('RegCreateKeyExW'));
+    expect(runner, contains('GetModuleFileNameW'));
+    expect(
+      runner.indexOf('RegisterProtocolHandlerIfMissing();'),
+      lessThan(runner.indexOf('CreateMutexW')),
+    );
     expect(installer, contains('Software\\Classes\\harmonymusic'));
     expect(installer, contains('harmonymusic.exe'));
   });

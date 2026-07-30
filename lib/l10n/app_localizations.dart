@@ -1790,6 +1790,12 @@ abstract class AppLocalizations {
   /// **'Login / Register'**
   String get loginOrRegister;
 
+  /// No description provided for @useAnotherAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Use another account'**
+  String get useAnotherAccount;
+
   /// No description provided for @logout.
   ///
   /// In en, this message translates to:

@@ -1765,6 +1765,16 @@ class MyAudioHandler extends BaseAudioHandler {
         );
         break;
 
+      case 'setShuffleModePreservingQueue':
+        final enabled = extras?['enabled'] == true;
+        shuffleModeEnabled = enabled;
+        _queueBeforeShuffle = enabled
+            ? List<MediaItem>.from(queue.value)
+            : null;
+        _emitPlaybackSnapshot();
+        _schedulePreloadWindow();
+        break;
+
       case 'clearRemoteNotificationMirror':
         _clearRemoteNotificationMirror();
         break;

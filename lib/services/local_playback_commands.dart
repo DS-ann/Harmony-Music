@@ -1,6 +1,7 @@
 import 'package:audio_service/audio_service.dart';
 
 import '../domain/repositories/settings_repository.dart';
+import 'cloud/playback_modes.dart';
 
 /// Playback operations that always act on **this** device's audio engine.
 ///
@@ -32,6 +33,17 @@ class LocalPlaybackCommands {
   Stream<List<MediaItem>> get queueStream => _audioHandler.queue;
 
   Stream<MediaItem?> get mediaItemStream => _audioHandler.mediaItem;
+
+  Stream<PlaybackState> get playbackStateStream => _audioHandler.playbackState;
+
+  CloudPlaybackModes get playbackModes {
+    final state = _audioHandler.playbackState.value;
+    return CloudPlaybackModes(
+      shuffle: state.shuffleMode != AudioServiceShuffleMode.none,
+      repeat: state.repeatMode != AudioServiceRepeatMode.none,
+      queueLoop: _settingsRepository.getQueueLoopModeEnabled(),
+    );
+  }
 
   Future<void> play() => _audioHandler.play();
 
@@ -69,10 +81,19 @@ class LocalPlaybackCommands {
   Future<void> setVolume(int value) =>
       _audioHandler.customAction('setVolume', {'value': value});
 
-  Future<void> setShuffle(bool enabled) async {
-    await _audioHandler.setShuffleMode(
-      enabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
-    );
+  Future<void> setShuffle(
+    bool enabled, {
+    bool preserveQueueOrder = false,
+  }) async {
+    if (preserveQueueOrder) {
+      await _audioHandler.customAction('setShuffleModePreservingQueue', {
+        'enabled': enabled,
+      });
+    } else {
+      await _audioHandler.setShuffleMode(
+        enabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
+      );
+    }
     await _settingsRepository.setShuffleModeEnabled(enabled);
   }
 
@@ -88,6 +109,20 @@ class LocalPlaybackCommands {
       'enable': enabled,
     });
     await _settingsRepository.setQueueLoopModeEnabled(enabled);
+  }
+
+  Future<void> persistPlaybackModes(CloudPlaybackModes modes) async {
+    final writes = <Future<void>>[];
+    if (modes.shuffle case final enabled?) {
+      writes.add(_settingsRepository.setShuffleModeEnabled(enabled));
+    }
+    if (modes.repeat case final enabled?) {
+      writes.add(_settingsRepository.setLoopModeEnabled(enabled));
+    }
+    if (modes.queueLoop case final enabled?) {
+      writes.add(_settingsRepository.setQueueLoopModeEnabled(enabled));
+    }
+    await Future.wait(writes);
   }
 
   /// Live progress for publication to the account session. Carries `durationMs`
@@ -121,6 +156,7 @@ class LocalPlaybackCommands {
       'playing': state.playing,
       'loading': loading,
       'speed': state.speed,
+      ...playbackModes.toMap(),
       'publishedAtMs': DateTime.now().millisecondsSinceEpoch,
     };
   }

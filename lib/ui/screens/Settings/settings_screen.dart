@@ -161,6 +161,25 @@ class SettingsScreen extends ConsumerWidget {
                                 ),
                               ),
                       ),
+                      if (!authController.isAuthenticated &&
+                          authController.isAvailable &&
+                          !authController.isBusy)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 10),
+                            child: TextButton.icon(
+                              onPressed: () => _signIn(
+                                context,
+                                ref,
+                                authController,
+                                chooseAccount: true,
+                              ),
+                              icon: const Icon(Icons.switch_account_outlined),
+                              label: Text(context.l10n.useAnotherAccount),
+                            ),
+                          ),
+                        ),
                       if (authController.errorMessage != null)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(5, 0, 10, 12),
@@ -1488,8 +1507,9 @@ class _DeveloperSettingsInspector extends ConsumerWidget {
 Future<void> _signIn(
   BuildContext context,
   WidgetRef ref,
-  AuthController controller,
-) async {
+  AuthController controller, {
+  bool chooseAccount = false,
+}) async {
   controller.onFirstSignInWithLocalLibrary = () async {
     final library = ref.read(libraryRepositoryProvider);
     final hasLocalLibrary =
@@ -1519,7 +1539,7 @@ Future<void> _signIn(
     return replace ?? false;
   };
   try {
-    await controller.login();
+    await controller.login(chooseAccount: chooseAccount);
   } finally {
     controller.onFirstSignInWithLocalLibrary = null;
   }

@@ -178,9 +178,9 @@ class AuthController extends ChangeNotifier {
   /// replace it. Null means nothing to decide.
   Future<bool> Function()? onFirstSignInWithLocalLibrary;
 
-  Future<void> login() async => _run(() async {
+  Future<void> login({bool chooseAccount = false}) async => _run(() async {
     final previousAccount = _settings.getCloudAccountSubject();
-    userProfile = await _service.login();
+    userProfile = await _service.login(chooseAccount: chooseAccount);
     final subject = userProfile?.sub;
     if (subject == null) return;
     sessionExpiredNoticeDismissed = false;

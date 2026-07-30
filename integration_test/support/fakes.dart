@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -6,6 +7,7 @@ import 'package:auth0_flutter/auth0_flutter.dart';
 import 'package:dio/dio.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:harmonymusic/domain/repositories/download_repository.dart';
+import 'package:harmonymusic/domain/repositories/lyrics_repository.dart';
 import 'package:harmonymusic/domain/repositories/settings_repository.dart';
 import 'package:harmonymusic/models/album.dart';
 import 'package:harmonymusic/models/playlist.dart';
@@ -27,6 +29,36 @@ MediaItem testSong({
     artUri: Uri.parse('https://example.test/$id.png'),
     extras: const {'isLive': false},
   );
+}
+
+class FakeLyricsRepository implements LyricsRepository {
+  FakeLyricsRepository({this.lyrics, this.completeReadsAutomatically = true});
+
+  dynamic lyrics;
+  bool completeReadsAutomatically;
+  int getCallCount = 0;
+  int saveCallCount = 0;
+  Completer<dynamic>? _pendingRead;
+
+  @override
+  Future<dynamic> getLyrics(String key) {
+    getCallCount++;
+    if (completeReadsAutomatically) return Future<dynamic>.value(lyrics);
+    _pendingRead ??= Completer<dynamic>();
+    return _pendingRead!.future;
+  }
+
+  void completePendingRead([dynamic result]) {
+    final pendingRead = _pendingRead;
+    if (pendingRead == null || pendingRead.isCompleted) return;
+    pendingRead.complete(result ?? lyrics);
+  }
+
+  @override
+  Future<void> saveLyrics(String key, dynamic lyrics) async {
+    saveCallCount++;
+    this.lyrics = lyrics;
+  }
 }
 
 class FakeMusicService implements MusicServiceContract {
@@ -213,7 +245,10 @@ class FakeUpdateService implements UpdateServiceContract {
   // silently swallows the next test's first tap on whatever it happens to
   // land on (the modal barrier absorbs the pointer event) rather than
   // failing the test that actually caused it — only [hasUpdate] tests that.
-  const FakeUpdateService({this.hasUpdate = false, this.rollingSha = 'remote-sha'});
+  const FakeUpdateService({
+    this.hasUpdate = false,
+    this.rollingSha = 'remote-sha',
+  });
 
   final bool hasUpdate;
   final String rollingSha;
@@ -324,11 +359,34 @@ class FakeAudioHandler extends BaseAudioHandler {
     reset();
   }
 
+  int playCallCount = 0;
+  int pauseCallCount = 0;
+  int nextCallCount = 0;
+  int previousCallCount = 0;
+  final seekPositions = <Duration>[];
+  final playedIndices = <int>[];
+  final customActionNames = <String>[];
+  final shuffleModes = <AudioServiceShuffleMode>[];
+  final repeatModes = <AudioServiceRepeatMode>[];
+  bool completeSourceLoadsAutomatically = true;
+  bool bufferSeeks = false;
+
   /// `AudioService.init` can only run once per test process (the plugin owns
   /// a single static handler), so every `bootTestApp` call in a file reuses
   /// the same instance rather than constructing a fresh one — this clears
   /// state a prior test in the same file left behind instead.
   void reset() {
+    playCallCount = 0;
+    pauseCallCount = 0;
+    nextCallCount = 0;
+    previousCallCount = 0;
+    seekPositions.clear();
+    playedIndices.clear();
+    customActionNames.clear();
+    shuffleModes.clear();
+    repeatModes.clear();
+    completeSourceLoadsAutomatically = true;
+    bufferSeeks = false;
     playbackState.add(
       PlaybackState(
         controls: const [],
@@ -342,38 +400,196 @@ class FakeAudioHandler extends BaseAudioHandler {
 
   @override
   Future<void> updateQueue(List<MediaItem> newQueue) async {
-    queue.add(newQueue);
-    if (newQueue.isNotEmpty) mediaItem.add(newQueue.first);
+    queue.add(List<MediaItem>.from(newQueue));
+    if (newQueue.isEmpty) {
+      mediaItem.add(null);
+      return;
+    }
+    final currentId = mediaItem.value?.id;
+    final currentIndex = newQueue.indexWhere((item) => item.id == currentId);
+    final index = currentIndex < 0 ? 0 : currentIndex;
+    mediaItem.add(newQueue[index]);
+    playbackState.add(playbackState.value.copyWith(queueIndex: index));
   }
 
   @override
   Future<void> play() async {
-    playbackState.add(playbackState.value.copyWith(playing: true));
+    playCallCount++;
+    playbackState.add(
+      playbackState.value.copyWith(
+        playing: true,
+        processingState: AudioProcessingState.ready,
+      ),
+    );
   }
 
   @override
   Future<void> pause() async {
+    pauseCallCount++;
     playbackState.add(playbackState.value.copyWith(playing: false));
   }
 
   @override
-  Future<void> seek(Duration position) async {}
+  Future<void> seek(Duration position) async {
+    seekPositions.add(position);
+    playbackState.add(
+      playbackState.value.copyWith(
+        playing: true,
+        processingState: bufferSeeks
+            ? AudioProcessingState.buffering
+            : AudioProcessingState.ready,
+        updatePosition: position,
+      ),
+    );
+  }
 
   @override
-  Future<dynamic> customAction(String name, [Map<String, dynamic>? extras]) {
+  Future<void> skipToNext() async {
+    nextCallCount++;
+    final currentQueue = queue.value;
+    final currentIndex = currentQueue.indexWhere(
+      (item) => item.id == mediaItem.value?.id,
+    );
+    if (currentIndex >= 0 && currentIndex + 1 < currentQueue.length) {
+      await _selectQueueIndex(currentIndex + 1);
+    }
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    previousCallCount++;
+    final currentQueue = queue.value;
+    final currentIndex = currentQueue.indexWhere(
+      (item) => item.id == mediaItem.value?.id,
+    );
+    if (currentIndex > 0) {
+      await _selectQueueIndex(currentIndex - 1);
+    } else {
+      await seek(Duration.zero);
+    }
+  }
+
+  @override
+  Future<void> addQueueItem(MediaItem item) async {
+    await updateQueue([...queue.value, item]);
+  }
+
+  @override
+  Future<void> addQueueItems(List<MediaItem> items) async {
+    await updateQueue([...queue.value, ...items]);
+  }
+
+  @override
+  Future<void> removeQueueItem(MediaItem item) async {
+    await updateQueue(
+      queue.value.where((queued) => queued.id != item.id).toList(),
+    );
+  }
+
+  @override
+  Future<void> setShuffleMode(AudioServiceShuffleMode shuffleMode) async {
+    shuffleModes.add(shuffleMode);
+    playbackState.add(playbackState.value.copyWith(shuffleMode: shuffleMode));
+  }
+
+  @override
+  Future<void> setRepeatMode(AudioServiceRepeatMode repeatMode) async {
+    repeatModes.add(repeatMode);
+    playbackState.add(playbackState.value.copyWith(repeatMode: repeatMode));
+  }
+
+  @override
+  Future<dynamic> customAction(
+    String name, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    customActionNames.add(name);
     final item = extras?['mediaItem'];
-    if (item is MediaItem) {
+    if (name == 'setSourceNPlay' && item is MediaItem) {
+      queue.add([item]);
+      await _selectQueueIndex(0);
+    } else if (name == 'playByIndex') {
+      final index = extras?['index'] as int? ?? 0;
+      playedIndices.add(index);
+      await _selectQueueIndex(index);
+    } else if (item is MediaItem) {
       mediaItem.add(item);
       queue.add([item]);
-    }
-    if (name == 'playByIndex') {
-      final index = extras?['index'] as int? ?? 0;
-      final currentQueue = queue.value;
-      if (index >= 0 && index < currentQueue.length) {
-        mediaItem.add(currentQueue[index]);
+    } else if (name == 'clearQueue') {
+      queue.add(const []);
+      mediaItem.add(null);
+      playbackState.add(
+        playbackState.value.copyWith(
+          playing: false,
+          processingState: AudioProcessingState.idle,
+          queueIndex: null,
+        ),
+      );
+    } else if (name == 'reorderQueue') {
+      final oldIndex = extras?['oldIndex'] as int? ?? -1;
+      var newIndex = extras?['newIndex'] as int? ?? -1;
+      final reordered = List<MediaItem>.from(queue.value);
+      if (oldIndex >= 0 &&
+          oldIndex < reordered.length &&
+          newIndex >= 0 &&
+          newIndex <= reordered.length) {
+        final item = reordered.removeAt(oldIndex);
+        if (newIndex > oldIndex) newIndex--;
+        reordered.insert(newIndex, item);
+        queue.add(reordered);
       }
     }
-    return Future.value(null);
+    return null;
+  }
+
+  Future<void> _selectQueueIndex(int index) async {
+    final currentQueue = queue.value;
+    if (index < 0 || index >= currentQueue.length) return;
+    playbackState.add(
+      playbackState.value.copyWith(
+        playing: true,
+        processingState: AudioProcessingState.loading,
+        queueIndex: index,
+      ),
+    );
+    mediaItem.add(currentQueue[index]);
+    if (!completeSourceLoadsAutomatically) return;
+    await Future<void>.delayed(Duration.zero);
+    completeCurrentLoad();
+  }
+
+  Future<void> finishCurrentTrackAndAdvance() async {
+    final duration = mediaItem.value?.duration ?? Duration.zero;
+    playbackState.add(
+      playbackState.value.copyWith(
+        playing: true,
+        processingState: AudioProcessingState.completed,
+        updatePosition: duration,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    await skipToNext();
+  }
+
+  void reportCurrentLoadBuffering({
+    Duration reportedPosition = const Duration(milliseconds: 500),
+  }) {
+    playbackState.add(
+      playbackState.value.copyWith(
+        playing: true,
+        processingState: AudioProcessingState.buffering,
+        updatePosition: reportedPosition,
+      ),
+    );
+  }
+
+  void completeCurrentLoad() {
+    playbackState.add(
+      playbackState.value.copyWith(
+        playing: true,
+        processingState: AudioProcessingState.ready,
+      ),
+    );
   }
 }
 
@@ -416,6 +632,7 @@ class FakeAuthService implements AuthServiceContract {
 
   int loginCallCount = 0;
   int logoutCallCount = 0;
+  bool? lastChooseAccount;
 
   @override
   bool isConfigured = true;
@@ -430,8 +647,9 @@ class FakeAuthService implements AuthServiceContract {
   Future<UserProfile?> tryRestoreSession() async => restorableSession;
 
   @override
-  Future<UserProfile> login() async {
+  Future<UserProfile> login({bool chooseAccount = false}) async {
     loginCallCount++;
+    lastChooseAccount = chooseAccount;
     final profile = nextLogin ?? restorableSession;
     if (profile == null) {
       throw StateError(

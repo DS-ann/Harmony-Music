@@ -105,8 +105,14 @@ class StandardPlayer extends ConsumerWidget {
                         child: Padding(
                           padding: const EdgeInsets.only(top: 40),
                           child: Center(
-                            child: AlbumArtNLyrics(
-                              playerArtImageSize: size.width * .29,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const LyricsSwitch(),
+                                AlbumArtNLyrics(
+                                  playerArtImageSize: size.width * .29,
+                                ),
+                              ],
                             ),
                           ),
                         ),

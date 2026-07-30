@@ -896,6 +896,9 @@ class AppLocalizationsHr extends AppLocalizations {
   String get loginOrRegister => 'Prijava / Registracija';
 
   @override
+  String get useAnotherAccount => 'Koristi drugi račun';
+
+  @override
   String get logout => 'Odjava';
 
   @override

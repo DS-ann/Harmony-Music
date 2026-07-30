@@ -366,6 +366,7 @@ void main() {
 
   test('a handoff resumed mid-track counts as a started source', () {
     final startPosition = _methodBlock(player, '_isSourceStartPosition');
+    final playbackProgress = _methodBlock(player, '_hasSourcePlaybackProgress');
     final begin = _methodBlock(player, '_beginPendingSourceStart');
     final clear = _methodBlock(player, '_clearPendingSourceStart');
     final resolving = _methodBlock(player, 'setCurrentSongResolving');
@@ -378,6 +379,10 @@ void main() {
     expect(
       startPosition,
       isNot(contains('position <= _sourceStartProgressWindow')),
+    );
+    expect(
+      playbackProgress,
+      contains('position > _pendingPlaybackStartPosition'),
     );
     expect(begin, contains('_expectedSourceStartPosition ?? Duration.zero'));
     expect(clear, contains('_pendingPlaybackStartPosition = Duration.zero'));
@@ -514,11 +519,23 @@ void main() {
   test('a resolved song never shimmers because audio is busy', () {
     final getter = player.substring(
       player.indexOf('bool get isCurrentSongLoading'),
-      player.indexOf('int? beginRemoteSongTransition'),
+      player.indexOf('bool get isCurrentOnlineSongInitiallyLoading'),
     );
     expect(getter, contains('MediaItemBuilder.isResolving'));
     expect(getter, isNot(contains('buttonState')));
     expect(getter, isNot(contains('_currentSongResolving')));
+  });
+
+  test('online artwork shimmers only until the selected source starts', () {
+    final getter = player.substring(
+      player.indexOf('bool get isCurrentOnlineSongInitiallyLoading'),
+      player.indexOf('int? beginRemoteSongTransition'),
+    );
+
+    expect(getter, contains("_isWaitingForCurrentSourceStart"));
+    expect(getter, contains('_currentSongResolving'));
+    expect(getter, contains("!sourceUrl.contains('file')"));
+    expect(getter, isNot(contains('buttonState')));
   });
 
   test('a brief rebuffer does not swap the play icon for a spinner', () {
@@ -552,6 +569,7 @@ void main() {
     final retarget = _methodBlock(player, '_retargetPendingSourceStart');
     expect(retarget, contains('_pendingPlaybackStartPosition = position'));
     expect(retarget, contains('_expectedSourceStartPosition = position'));
+    expect(retarget, contains('_sourceStartGuardPosition = position'));
 
     // Restarting the current track seeks to zero for the same reason.
     expect(
