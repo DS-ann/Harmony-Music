@@ -5,10 +5,8 @@ import '../../../app/providers/controller_providers.dart';
 import '/ui/player/components/lyrics_widget.dart';
 import '../../widgets/awaitable_button.dart';
 import '../../widgets/image_widget.dart';
-import '../../widgets/loader.dart';
 import '../../widgets/sleep_timer_bottom_sheet.dart';
 import '../../widgets/song_info_bottom_sheet.dart';
-import '../player_controller.dart';
 
 class AlbumArtNLyrics extends ConsumerWidget {
   const AlbumArtNLyrics({super.key, required this.playerArtImageSize});
@@ -65,26 +63,11 @@ class AlbumArtNLyrics extends ConsumerWidget {
                     size: playerArtImageSize,
                     song: playerController.currentSong.value!,
                     isPlayerArtImage: true,
+                    showShimmer:
+                        playerController.isCurrentOnlineSongInitiallyLoading,
                   ),
                 ),
 
-                /// Loading state: while the track resolves/buffers, dim the
-                /// art and show a spinner so it is obvious playback is coming.
-                if (playerController.buttonState.value ==
-                    PlayButtonState.loading)
-                  IgnorePointer(
-                    child: Container(
-                      width: playerArtImageSize,
-                      height: playerArtImageSize,
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.35),
-                        borderRadius: BorderRadius.circular(5),
-                      ),
-                      child: const Center(
-                        child: LoadingIndicator(dimension: 46),
-                      ),
-                    ),
-                  ),
                 playerController.showLyricsFlag.value
                     ? InkWell(
                         onTap: () async {

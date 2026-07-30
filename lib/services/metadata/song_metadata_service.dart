@@ -11,6 +11,7 @@ import '../app_contracts.dart';
 import '../constant.dart';
 import '../resolver/resolver_client.dart';
 import '../resolver/resolver_configuration.dart';
+import 'playback_metadata_resolver.dart';
 
 /// Turns bare video ids into displayable [MediaItem]s as fast as the situation
 /// allows.
@@ -28,7 +29,7 @@ import '../resolver/resolver_configuration.dart';
 /// The Resolver is shared across all users so it is usually the faster leg, but
 /// its coverage starts empty and fills lazily; racing rather than chaining means
 /// a Resolver miss never adds latency.
-class SongMetadataService {
+class SongMetadataService implements PlaybackMetadataResolver {
   SongMetadataService({
     required MusicServiceContract music,
     required SongCacheRepository songCache,

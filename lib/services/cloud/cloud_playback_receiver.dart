@@ -7,11 +7,12 @@ import '../../utils/helper.dart';
 import '../constant.dart';
 import '../crash_diagnostics_service.dart';
 import '../local_playback_commands.dart';
-import '../metadata/song_metadata_service.dart';
+import '../metadata/playback_metadata_resolver.dart';
 import '../playback_command_service.dart';
 import '../previous_track_policy.dart';
 import '../../ui/player/player_controller.dart';
-import 'cloud_sync_coordinator.dart';
+import 'cloud_playback_gateway.dart';
+import 'playback_modes.dart';
 import 'playback_socket_client.dart';
 
 /// Applies account playback commands while Harmony is running.
@@ -32,10 +33,10 @@ class CloudPlaybackReceiver {
     this._player,
   ]);
 
-  final CloudSyncCoordinator _cloud;
-  final SongMetadataService _metadata;
+  final CloudPlaybackGateway _cloud;
+  final PlaybackMetadataResolver _metadata;
   final PlaybackCommandService _commands;
-  final PlaybackSocketClient _socket;
+  final PlaybackSocketTransport _socket;
   final PlayerController? _player;
 
   /// Applying a command must never route back out to the network — see
@@ -47,6 +48,8 @@ class CloudPlaybackReceiver {
   StreamSubscription<List<MediaItem>>? _localQueue;
   StreamSubscription<MediaItem?>? _localSong;
   StreamSubscription<String?>? _localSelection;
+  StreamSubscription<PlaybackState>? _localPlaybackState;
+  StreamSubscription<CloudPlaybackModes>? _localModeChanges;
   Timer? _progressTimer;
   Timer? _statePublishDebounce;
 
@@ -56,6 +59,9 @@ class CloudPlaybackReceiver {
   int _appliedQueueRevision = -1;
   bool _isAudioTarget = false;
   int _targetPlaybackGeneration = 0;
+  CloudPlaybackModes _sessionModes = const CloudPlaybackModes();
+  CloudPlaybackModes? _lastObservedLocalModes;
+  String? _lastRequestedNextSongId;
 
   /// Bumped every time this device decides its own role.
   ///
@@ -153,6 +159,7 @@ class CloudPlaybackReceiver {
     _targetSongIdOverride = null;
     _targetLoadingPositionMs = null;
     _targetLoadingDurationMs = null;
+    _sessionModes = const CloudPlaybackModes();
     try {
       await _cloud.endPlaybackSession();
     } catch (error, stackTrace) {
@@ -175,6 +182,7 @@ class CloudPlaybackReceiver {
       await _player?.clearRemoteMediaNotification();
       if (preserveMirroredPosition) {
         await _adoptMirroredSongLocally();
+        await _applyModesToLocalPlayer(_sessionModes, preserveQueueOrder: true);
       }
       await _local.pause();
     } catch (error, stackTrace) {
@@ -245,8 +253,10 @@ class CloudPlaybackReceiver {
     _statePublishDebounce?.cancel();
     _appliedTargetSessionId = null;
     _appliedQueueIds = List<String>.unmodifiable(queueIds);
+    _sessionModes = _local.playbackModes;
     final player = _player;
     if (player == null) return;
+    player.applyRemotePlaybackModes(_sessionModes);
     final byId = {for (final item in queue) item.id: item};
     final items = [
       for (final id in queueIds) byId[id] ?? MediaItemBuilder.placeholder(id),
@@ -398,6 +408,7 @@ class CloudPlaybackReceiver {
     _targetLoadingDurationMs = null;
     _appliedQueueRevision = -1;
     _appliedQueueIds = null;
+    _sessionModes = const CloudPlaybackModes();
   }
 
   Future<void> _applySession({
@@ -411,6 +422,10 @@ class CloudPlaybackReceiver {
     // Always observed, even while independent: if this device later initiates
     // a handoff, its first durable write must sort after the cloud's revision.
     _commands.observeQueueRevision(_revisionOf(state));
+    final incomingModes = CloudPlaybackModes.fromMap(state);
+    if (incomingModes.hasAny) {
+      _sessionModes = _sessionModes.merge(incomingModes);
+    }
 
     // Session traffic only concerns devices that opted in. A device that never
     // accepted or initiated a handoff keeps playing its own music untouched —
@@ -422,6 +437,7 @@ class CloudPlaybackReceiver {
       _isAudioTarget = false;
       _stopProgressPublishing();
       _commands.startRemoteControl(targetDeviceId);
+      _player?.applyRemotePlaybackModes(incomingModes);
       await _mirrorQueue(state, positionMs, durationMs, playing);
       // Becoming the target again must re-apply the session from scratch.
       _appliedTargetSessionId = null;
@@ -433,9 +449,18 @@ class CloudPlaybackReceiver {
     if (!_isAudioTarget) return;
 
     await _becomeAudioTarget();
+    await _applyModesToLocalPlayer(incomingModes, preserveQueueOrder: true);
     // Publishing must not wait on the audio load: a controller with no progress
     // frames shows a dead UI.
     _startProgressPublishing();
+    // A start-session handoff arrives as a command before its durable snapshot.
+    // The command has no session id, so it claims the temporary handoff latch.
+    // When the matching snapshot follows, adopt its real id instead of treating
+    // the same queue/song as a second playback request.
+    if (_appliedTargetSessionId == _handoffSessionId &&
+        _matchesAppliedHandoff(state)) {
+      _appliedTargetSessionId = sessionId;
+    }
     if (_appliedTargetSessionId != sessionId) {
       await _startSessionPlayback(
         sessionId,
@@ -529,6 +554,11 @@ class CloudPlaybackReceiver {
     if (queueIds.isEmpty) return;
     final revision = _revisionOf(state);
     final index = _indexOf(state, queueIds.length);
+    final modes = CloudPlaybackModes.fromMap(state);
+    if (modes.hasAny) {
+      _sessionModes = _sessionModes.merge(modes);
+      player.applyRemotePlaybackModes(modes);
+    }
 
     _appliedQueueRevision = revision;
     // Compare ids, not the revision. The target bumps the revision every time it
@@ -624,6 +654,11 @@ class CloudPlaybackReceiver {
     required bool playing,
     bool isExplicitHandoff = false,
   }) async {
+    final incomingModes = CloudPlaybackModes.fromMap(state);
+    if (incomingModes.hasAny) {
+      _sessionModes = _sessionModes.merge(incomingModes);
+      await _applyModesToLocalPlayer(incomingModes, preserveQueueOrder: true);
+    }
     final queueIds = _queueIdsOf(state);
     if (queueIds.isEmpty) throw const FormatException('Empty session queue.');
     final index = _indexOf(state, queueIds.length);
@@ -851,6 +886,31 @@ class CloudPlaybackReceiver {
     _localSelection = _commands.localSongSelections.listen(
       _onLocalSongSelected,
     );
+    _localPlaybackState = _local.playbackStateStream.listen(
+      _onLocalPlaybackStateChanged,
+    );
+    _localModeChanges = _commands.localModeChanges.listen(
+      _onLocalPlaybackModesChanged,
+    );
+  }
+
+  void _onLocalPlaybackStateChanged(PlaybackState _) {
+    final modes = _local.playbackModes;
+    if (modes == _lastObservedLocalModes) return;
+    _lastObservedLocalModes = modes;
+    if (!_isAudioTarget) return;
+    _sessionModes = _sessionModes.merge(modes);
+    unawaited(_local.persistPlaybackModes(modes));
+    _publishProgressFrame();
+    _scheduleStatePublish();
+  }
+
+  void _onLocalPlaybackModesChanged(CloudPlaybackModes modes) {
+    if (!_isAudioTarget) return;
+    _sessionModes = _sessionModes.merge(modes);
+    _lastObservedLocalModes = modes;
+    _publishProgressFrame();
+    _scheduleStatePublish();
   }
 
   void _onLocalSongSelected(String? _) {
@@ -1021,6 +1081,13 @@ class CloudPlaybackReceiver {
         );
         return;
       case 'next':
+        final desiredVideoId = payload['desiredVideoId']?.toString();
+        _lastRequestedNextSongId = desiredVideoId;
+        if (desiredVideoId != null &&
+            await _playCloudQueueItem(desiredVideoId)) {
+          return;
+        }
+        if (await _playNextCloudQueueItem()) return;
         await _local.next();
         return;
       case 'previous':
@@ -1066,12 +1133,24 @@ class CloudPlaybackReceiver {
         return;
       case 'shuffleMode':
         await _local.setShuffle(payload['enabled'] == true);
+        _sessionModes = _sessionModes.merge(
+          CloudPlaybackModes(shuffle: payload['enabled'] == true),
+        );
+        _scheduleStatePublish();
         return;
       case 'repeatMode':
         await _local.setLoop(payload['enabled'] == true);
+        _sessionModes = _sessionModes.merge(
+          CloudPlaybackModes(repeat: payload['enabled'] == true),
+        );
+        _scheduleStatePublish();
         return;
       case 'queueLoopMode':
         await _local.setQueueLoopMode(payload['enabled'] == true);
+        _sessionModes = _sessionModes.merge(
+          CloudPlaybackModes(queueLoop: payload['enabled'] == true),
+        );
+        _scheduleStatePublish();
         return;
       case 'volume':
         await _local.setVolume((payload['value'] as num?)?.toInt() ?? 100);
@@ -1094,6 +1173,40 @@ class CloudPlaybackReceiver {
         'queueIds': queueIds,
         'index': previousIndex,
         'currentSongId': previousSongId,
+        'positionMs': 0,
+        'playing': true,
+      },
+      positionMs: 0,
+      playing: true,
+    );
+    return true;
+  }
+
+  Future<bool> _playNextCloudQueueItem() async {
+    final queueIds = _appliedQueueIds;
+    final currentSongId = _targetSongIdOverride ?? _local.currentSong?.id;
+    if (queueIds == null || currentSongId == null) return false;
+    final currentIndex = queueIds.indexOf(currentSongId);
+    if (currentIndex < 0) return false;
+    final nextIndex = currentIndex + 1 < queueIds.length
+        ? currentIndex + 1
+        : _local.playbackModes.queueLoop == true
+        ? 0
+        : currentIndex;
+    if (nextIndex == currentIndex) return false;
+    return _playCloudQueueItem(queueIds[nextIndex]);
+  }
+
+  Future<bool> _playCloudQueueItem(String videoId) async {
+    final queueIds = _appliedQueueIds;
+    if (queueIds == null) return false;
+    final index = queueIds.indexOf(videoId);
+    if (index < 0) return false;
+    await _startPlayback(
+      {
+        'queueIds': queueIds,
+        'index': index,
+        'currentSongId': videoId,
         'positionMs': 0,
         'playing': true,
       },
@@ -1135,6 +1248,8 @@ class CloudPlaybackReceiver {
     'lastFrameReceived': _lastFrameReceived,
     'lastFrameReceivedAt': _lastFrameReceivedAt?.toIso8601String(),
     'publishingProgress': _progressTimer != null,
+    'sessionModes': _sessionModes.toMap(),
+    'lastRequestedNextSongId': _lastRequestedNextSongId,
   };
 
   // ------------------------------------------------------------------- helpers
@@ -1156,6 +1271,49 @@ class CloudPlaybackReceiver {
   static int _revisionOf(Map<String, dynamic> state) =>
       (state['queueRevision'] as num?)?.toInt() ?? 0;
 
+  bool _matchesAppliedHandoff(Map<String, dynamic> state) {
+    final incomingIds = _queueIdsOf(state);
+    final appliedIds = _appliedQueueIds;
+    if (appliedIds == null || incomingIds.length != appliedIds.length) {
+      return false;
+    }
+    for (var index = 0; index < incomingIds.length; index++) {
+      if (incomingIds[index] != appliedIds[index]) return false;
+    }
+    final incomingIndex = _indexOf(state, incomingIds.length);
+    final incomingSongId = incomingIds.isEmpty
+        ? null
+        : incomingIds[incomingIndex];
+    final activeSongId = _targetSongIdOverride ?? _local.currentSong?.id;
+    return incomingSongId != null && incomingSongId == activeSongId;
+  }
+
+  Future<void> _applyModesToLocalPlayer(
+    CloudPlaybackModes modes, {
+    required bool preserveQueueOrder,
+  }) async {
+    if (!modes.hasAny) return;
+    final current = _local.playbackModes;
+    if (modes.repeat case final enabled?) {
+      if (current.repeat != enabled) await _local.setLoop(enabled);
+    }
+    if (modes.queueLoop case final enabled?) {
+      if (current.queueLoop != enabled) {
+        await _local.setQueueLoopMode(enabled);
+      }
+    }
+    if (modes.shuffle case final enabled?) {
+      if (current.shuffle != enabled) {
+        await _local.setShuffle(
+          enabled,
+          preserveQueueOrder: preserveQueueOrder,
+        );
+      }
+    }
+    await _local.persistPlaybackModes(modes);
+    _lastObservedLocalModes = _local.playbackModes;
+  }
+
   static Iterable<List<T>> _chunks<T>(List<T> items, int size) sync* {
     for (var start = 0; start < items.length; start += size) {
       yield items.sublist(start, (start + size).clamp(0, items.length));
@@ -1168,6 +1326,8 @@ class CloudPlaybackReceiver {
     unawaited(_localQueue?.cancel());
     unawaited(_localSong?.cancel());
     unawaited(_localSelection?.cancel());
+    unawaited(_localPlaybackState?.cancel());
+    unawaited(_localModeChanges?.cancel());
     unawaited(_frames?.cancel());
     unawaited(_status?.cancel());
     unawaited(_socket.dispose());

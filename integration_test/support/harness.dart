@@ -10,6 +10,7 @@ import 'package:harmonymusic/app/providers/repository_providers.dart';
 import 'package:harmonymusic/app/providers/service_providers.dart';
 import 'package:harmonymusic/data/repositories/cloud_sync_repository.dart';
 import 'package:harmonymusic/data/repositories/hive_playlist_repository.dart';
+import 'package:harmonymusic/domain/repositories/lyrics_repository.dart';
 import 'package:harmonymusic/main.dart' as app;
 import 'package:harmonymusic/services/cloud/cloud_sync_coordinator.dart';
 import 'package:harmonymusic/services/cloud/harmony_cloud_client.dart';
@@ -55,11 +56,13 @@ class TestAppHandle {
     required this.container,
     required this.authService,
     required this.downloader,
+    required this.audioHandler,
   });
 
   final ProviderContainer container;
   final FakeAuthService authService;
   final FakeDownloader downloader;
+  final FakeAudioHandler audioHandler;
 }
 
 /// Boots the real app against an isolated, per-test Hive directory with the
@@ -84,6 +87,7 @@ class TestAppHandle {
 Future<TestAppHandle> bootTestApp(
   WidgetTester tester, {
   FakeAuthService? authService,
+  LyricsRepository? lyricsRepository,
   Future<void> Function()? seedHive,
   bool cloudSyncEnabled = false,
 }) async {
@@ -115,10 +119,13 @@ Future<TestAppHandle> bootTestApp(
   if (seedHive != null) await seedHive();
 
   final auth = authService ?? FakeAuthService();
+  final audioHandler = await _testAudioHandler();
   final container = ProviderContainer(
     overrides: [
-      audioHandlerProvider.overrideWithValue(await _testAudioHandler()),
+      audioHandlerProvider.overrideWithValue(audioHandler),
       musicServiceContractProvider.overrideWithValue(FakeMusicService()),
+      if (lyricsRepository != null)
+        lyricsRepositoryProvider.overrideWithValue(lyricsRepository),
       updateServiceContractProvider.overrideWithValue(
         const FakeUpdateService(),
       ),
@@ -208,5 +215,6 @@ Future<TestAppHandle> bootTestApp(
     container: container,
     authService: auth,
     downloader: container.read(downloaderProvider) as FakeDownloader,
+    audioHandler: audioHandler,
   );
 }

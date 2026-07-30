@@ -893,6 +893,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get loginOrRegister => 'Login / Register';
 
   @override
+  String get useAnotherAccount => 'Use another account';
+
+  @override
   String get logout => 'Logout';
 
   @override

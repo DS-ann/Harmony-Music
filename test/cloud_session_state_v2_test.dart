@@ -33,6 +33,14 @@ void main() {
   );
 
   group('session state v2', () {
+    test('carries explicit playback modes, including false values', () {
+      final state = commands.sessionState(queue: queueOf(2), index: 0);
+
+      expect(state['shuffle'], isFalse);
+      expect(state['repeat'], isFalse);
+      expect(state['queueLoop'], isFalse);
+    });
+
     test('carries ordered ids and nothing else about each song', () {
       final state = commands.sessionState(queue: queueOf(3), index: 1);
 
@@ -179,6 +187,19 @@ void main() {
         PlaybackState(processingState: AudioProcessingState.buffering),
       );
       expect(commands.progressFrame()['loading'], isTrue);
+    });
+
+    test('reports live playback modes to remote controllers', () {
+      handler.playbackState.add(
+        PlaybackState(
+          shuffleMode: AudioServiceShuffleMode.all,
+          repeatMode: AudioServiceRepeatMode.one,
+        ),
+      );
+
+      expect(commands.progressFrame(), containsPair('shuffle', true));
+      expect(commands.progressFrame(), containsPair('repeat', true));
+      expect(commands.progressFrame(), containsPair('queueLoop', false));
     });
   });
 }

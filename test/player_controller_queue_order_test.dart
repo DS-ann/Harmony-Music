@@ -205,9 +205,21 @@ void main() {
         '_listenForChangesInBufferedPosition',
       );
       final readyStartBlock = _methodBlock(source, '_isReadySourceStart');
+      final positionBlock = _methodBlock(source, '_listenForChangesInPosition');
 
       expect(playerStateBlock, contains('_isWaitingForCurrentSourceStart'));
-      expect(playerStateBlock, contains('_isReadySourceStart(playerState)'));
+      expect(
+        playerStateBlock,
+        isNot(contains('_isReadySourceStart(playerState)')),
+      );
+      expect(
+        playerStateBlock,
+        contains('_isReadyPausedPendingSource(playerState)'),
+      );
+      expect(
+        playerStateBlock,
+        contains('_restorePendingSourceStartFromGuard()'),
+      );
       expect(
         readyStartBlock,
         contains('_isSourceStartPosition(playbackState.updatePosition)'),
@@ -223,8 +235,12 @@ void main() {
       );
       expect(durationBlock, contains('_beginPendingSourceStart(mediaItem.id)'));
       expect(
-        bufferedBlock,
+        positionBlock,
         contains('_setButtonState(PlayButtonState.playing)'),
+      );
+      expect(
+        bufferedBlock,
+        contains('if (_isWaitingForCurrentSourceStart) return;'),
       );
     });
 
@@ -289,23 +305,61 @@ void main() {
       expect(positionBlock, contains('if (_isWaitingForCurrentSourceStart)'));
       expect(positionBlock, contains('_isReadySourceStart(playbackState)'));
       expect(positionBlock, contains('_isSourceStartPosition(position)'));
-      expect(positionBlock, contains('_clampProgressPosition(position'));
+      expect(positionBlock, contains('_hasSourcePlaybackProgress(position)'));
+      expect(positionBlock, contains('_clampProgressPosition('));
+      expect(positionBlock, contains('position,'));
       expect(readyStartBlock, contains('AudioProcessingState.ready'));
       expect(readyStartBlock, contains('playbackState.playing'));
       expect(
         readyStartBlock,
         contains('_isSourceStartPosition(playbackState.updatePosition)'),
       );
-      expect(bufferedBlock, contains('_isReadySourceStart(playbackState)'));
       expect(
         bufferedBlock,
-        contains(
-          'if (_isWaitingForCurrentSourceStart && !startedPendingSource) return;',
-        ),
+        contains('if (_isWaitingForCurrentSourceStart) return;'),
+      );
+      expect(
+        bufferedBlock,
+        isNot(contains('_isReadySourceStart(playbackState)')),
+      );
+      expect(
+        bufferedBlock,
+        isNot(contains('_setButtonState(PlayButtonState.playing)')),
       );
       expect(bufferedBlock, isNot(contains('val.current = oldState.current;')));
       expect(clampBlock, contains('position > total'));
       expect(clampBlock, contains('return total;'));
+    });
+
+    test('initial rebuffer restores loading and the requested start', () {
+      final playerStateBlock = _methodBlock(
+        source,
+        '_listenForChangesInPlayerState',
+      );
+      final restoreBlock = _methodBlock(
+        source,
+        '_restorePendingSourceStartFromGuard',
+      );
+      final guardBlock = _methodBlock(source, '_isInsideSourceStartGuard');
+
+      expect(playerStateBlock, contains('AudioProcessingState.buffering'));
+      expect(
+        playerStateBlock,
+        contains('_isInsideSourceStartGuard(playerState.updatePosition)'),
+      );
+      expect(guardBlock, contains('_sourceStartProgressWindow'));
+      expect(
+        restoreBlock,
+        contains('value.current = _sourceStartGuardPosition'),
+      );
+      expect(
+        restoreBlock,
+        contains('value.buffered = _sourceStartGuardPosition'),
+      );
+      expect(
+        restoreBlock,
+        contains('_setButtonState(PlayButtonState.loading)'),
+      );
     });
 
     test('same-song replay preserves visible lyrics state', () {

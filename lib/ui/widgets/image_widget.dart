@@ -20,11 +20,13 @@ class ImageWidget extends ConsumerWidget {
     this.artist,
     required this.size,
     this.isPlayerArtImage = false,
+    this.showShimmer = false,
   });
   final MediaItem? song;
   final Playlist? playlist;
   final Album? album;
   final bool isPlayerArtImage;
+  final bool showShimmer;
   final Artist? artist;
   final double size;
 
@@ -63,7 +65,9 @@ class ImageWidget extends ConsumerWidget {
         shape: artist != null ? BoxShape.circle : BoxShape.rectangle,
         borderRadius: artist != null ? null : BorderRadius.circular(5),
       ),
-      child: offlineAvailable
+      child: showShimmer
+          ? _buildShimmer(key: const Key('online-song-artwork-shimmer'))
+          : offlineAvailable
           ? Image.file(
               File(
                 "${settingsController.supportDirPath}/thumbnails/${song!.id}.png",
@@ -103,24 +107,25 @@ class ImageWidget extends ConsumerWidget {
                 );
               },
               progressIndicatorBuilder: (context, url, progress) =>
-                  Shimmer.fromColors(
-                    baseColor: Colors.grey[500]!,
-                    highlightColor: Colors.grey[300]!,
-                    enabled: true,
-                    direction: ShimmerDirection.ltr,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: artist != null
-                            ? BoxShape.circle
-                            : BoxShape.rectangle,
-                        borderRadius: artist != null
-                            ? null
-                            : BorderRadius.circular(10),
-                        color: Colors.white54,
-                      ),
-                    ),
-                  ),
+                  _buildShimmer(),
             ),
+    );
+  }
+
+  Widget _buildShimmer({Key? key}) {
+    return Shimmer.fromColors(
+      key: key,
+      baseColor: Colors.grey[500]!,
+      highlightColor: Colors.grey[300]!,
+      enabled: true,
+      direction: ShimmerDirection.ltr,
+      child: Container(
+        decoration: BoxDecoration(
+          shape: artist != null ? BoxShape.circle : BoxShape.rectangle,
+          borderRadius: artist != null ? null : BorderRadius.circular(10),
+          color: Colors.white54,
+        ),
+      ),
     );
   }
 

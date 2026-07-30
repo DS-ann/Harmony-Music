@@ -136,6 +136,8 @@ class MiniPlayer extends ConsumerWidget {
                                   ? ImageWidget(
                                       size: 50,
                                       song: playerController.currentSong.value!,
+                                      showShimmer: playerController
+                                          .isCurrentOnlineSongInitiallyLoading,
                                     )
                                   : const SizedBox(height: 50, width: 50),
                             ],

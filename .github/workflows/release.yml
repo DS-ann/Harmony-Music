@@ -206,7 +206,21 @@ jobs:
           # default, so a build failure here used to be silently swallowed and only
           # surfaced later as a confusing packaging error once iscc found no exe.
           if ($LASTEXITCODE -ne 0) { throw "flutter build windows failed with exit code $LASTEXITCODE" }
-          $app = "$pwd\build\windows\x64\runner\Release\harmonymusic.exe"
+          $releaseDir = "$pwd\build\windows\x64\runner\Release"
+          # auth0_flutter links these vcpkg libraries dynamically. Inno Setup
+          # packages the release directory verbatim, so fail here instead of
+          # publishing an installer that crashes at launch with a missing DLL.
+          $requiredRuntimeDlls = @(
+            "cpprest_2_10.dll",
+            "libcrypto-3-x64.dll",
+            "libssl-3-x64.dll"
+          )
+          foreach ($dll in $requiredRuntimeDlls) {
+            if (!(Test-Path (Join-Path $releaseDir $dll))) {
+              throw "Windows release is missing required runtime dependency: $dll"
+            }
+          }
+          $app = Join-Path $releaseDir "harmonymusic.exe"
 
           # No KEY_PEM: ship unsigned rather than fail the release. win_cert/cert.pem
           # is a self-signed leftover from the upstream project anyway — it was never

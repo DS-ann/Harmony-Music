@@ -33,8 +33,9 @@ void main() {
       );
     });
 
-    test('credits delivery latency so the bar is not permanently behind', () {
-      // The target sampled 400ms before we received the frame.
+    test('does not treat a behind peer clock as delivery latency', () {
+      // The target clock is 400ms behind. That must not make the controller
+      // jump forward: this number cannot distinguish clock skew from latency.
       final anchor = RemoteProgressAnchor.fromSample(
         positionMs: 10000,
         speed: 1,
@@ -42,35 +43,20 @@ void main() {
         now: now,
       );
 
-      expect(anchor.project(now), const Duration(milliseconds: 10400));
-    });
-
-    test('ignores an absurd clock skew instead of jumping the bar', () {
-      // A device whose clock is an hour behind would otherwise add an hour.
-      final anchor = RemoteProgressAnchor.fromSample(
-        positionMs: 10000,
-        speed: 1,
-        publishedAtMs:
-            now.millisecondsSinceEpoch - Duration(hours: 1).inMilliseconds,
-        now: now,
-      );
-
-      expect(
-        anchor.project(now),
-        const Duration(milliseconds: 10000) +
-            RemoteProgressAnchor.maximumLatency,
-      );
-    });
-
-    test('never runs backwards when the peer clock is ahead', () {
-      final anchor = RemoteProgressAnchor.fromSample(
-        positionMs: 10000,
-        speed: 1,
-        publishedAtMs: now.millisecondsSinceEpoch + 30000,
-        now: now,
-      );
-
       expect(anchor.project(now), const Duration(milliseconds: 10000));
+    });
+
+    test('anchors at receipt time for either direction of clock skew', () {
+      for (final skew in const [Duration(seconds: -2), Duration(seconds: 2)]) {
+        final anchor = RemoteProgressAnchor.fromSample(
+          positionMs: 10000,
+          speed: 1,
+          publishedAtMs: now.add(skew).millisecondsSinceEpoch,
+          now: now,
+        );
+
+        expect(anchor.project(now), const Duration(milliseconds: 10000));
+      }
     });
 
     test('treats a non-positive speed as normal rate rather than freezing', () {

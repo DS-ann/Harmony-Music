@@ -9,9 +9,10 @@ import '../../ui/screens/Library/library_controller.dart';
 import '../../ui/screens/Playlist/playlist_screen_controller.dart';
 import '../../utils/helper.dart';
 import '../constant.dart';
+import 'cloud_playback_gateway.dart';
 import 'harmony_cloud_client.dart';
 
-class CloudSyncCoordinator {
+class CloudSyncCoordinator implements CloudPlaybackGateway {
   CloudSyncCoordinator(this._repository, this._client);
 
   final CloudSyncRepository _repository;

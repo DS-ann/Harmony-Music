@@ -5,7 +5,9 @@ import 'account_lifecycle_smoke_test.dart' as account_lifecycle_smoke;
 import 'account_songs_filter_test.dart' as account_songs_filter;
 import 'account_switch_test.dart' as account_switch;
 import 'app_smoke_test.dart' as app_smoke;
+import 'player_behavior_test.dart' as player_behavior;
 import 'resolver_phone_test.dart' as resolver_phone;
+import 'remote_playback_test.dart' as remote_playback;
 import 'session_expiry_test.dart' as session_expiry;
 import 'unliked_download_dialog_test.dart' as unliked_download_dialog;
 
@@ -33,6 +35,8 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   group('app smoke', app_smoke.main);
+  group('player behavior', player_behavior.main);
+  group('remote playback', remote_playback.main);
   group('account songs filter', account_songs_filter.main);
   group('unliked download dialog', unliked_download_dialog.main);
   group('account switch', account_switch.main);

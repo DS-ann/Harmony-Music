@@ -3,7 +3,8 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 
 import '../domain/repositories/settings_repository.dart';
-import 'cloud/cloud_sync_coordinator.dart';
+import 'cloud/playback_modes.dart';
+import 'cloud/cloud_playback_gateway.dart';
 import 'local_playback_commands.dart';
 import 'playback_video_id.dart';
 import 'previous_track_policy.dart';
@@ -12,7 +13,7 @@ class PlaybackCommandService {
   PlaybackCommandService({
     required AudioHandler audioHandler,
     required SettingsRepository settingsRepository,
-    CloudSyncCoordinator? cloudSync,
+    CloudPlaybackGateway? cloudSync,
   }) : _audioHandler = audioHandler,
        _settingsRepository = settingsRepository,
        _cloudSync = cloudSync,
@@ -30,11 +31,13 @@ class PlaybackCommandService {
 
   final AudioHandler _audioHandler;
   final SettingsRepository _settingsRepository;
-  final CloudSyncCoordinator? _cloudSync;
+  final CloudPlaybackGateway? _cloudSync;
   String? _remoteTargetDeviceId;
   List<MediaItem> _remoteQueue = const [];
   final StreamController<String?> _localSongSelections =
       StreamController<String?>.broadcast(sync: true);
+  final StreamController<CloudPlaybackModes> _localModeChanges =
+      StreamController<CloudPlaybackModes>.broadcast(sync: true);
 
   bool get isRemoteControlActive => _remoteTargetDeviceId != null;
   bool get isPlaying => _audioHandler.playbackState.value.playing;
@@ -46,6 +49,13 @@ class PlaybackCommandService {
   /// selection from that later event is racy because a receiver-owned queue
   /// update can still be in flight at the same time.
   Stream<String?> get localSongSelections => _localSongSelections.stream;
+
+  /// Player modes changed through this device's own UI.
+  ///
+  /// The cloud target listens to this separately from playback state because
+  /// queue-loop has no audio_service field and therefore emits no media-session
+  /// event of its own.
+  Stream<CloudPlaybackModes> get localModeChanges => _localModeChanges.stream;
 
   /// Live progress, published over the socket on a tick.
   ///
@@ -193,12 +203,14 @@ class PlaybackCommandService {
     {'positionMs': position.inMilliseconds},
   );
 
-  Future<void> next() {
+  Future<void> next({String? desiredVideoId}) {
     final target = _remoteTargetDeviceId;
     if (target == null || _cloudSync == null) {
       _localSongSelections.add(null);
     }
-    return _sendRemoteOrLocal('next', _audioHandler.skipToNext);
+    return _sendRemoteOrLocal('next', _audioHandler.skipToNext, {
+      if (desiredVideoId != null) 'desiredVideoId': desiredVideoId,
+    });
   }
 
   Future<void> previous({
@@ -399,6 +411,7 @@ class PlaybackCommandService {
       nextEnabled ? AudioServiceShuffleMode.all : AudioServiceShuffleMode.none,
     );
     await _settingsRepository.setShuffleModeEnabled(nextEnabled);
+    _localModeChanges.add(local.playbackModes);
     return nextEnabled;
   }
 
@@ -413,6 +426,7 @@ class PlaybackCommandService {
       nextEnabled ? AudioServiceRepeatMode.one : AudioServiceRepeatMode.none,
     );
     await _settingsRepository.setLoopModeEnabled(nextEnabled);
+    _localModeChanges.add(local.playbackModes);
     return nextEnabled;
   }
 
@@ -426,6 +440,7 @@ class PlaybackCommandService {
       "enable": enabled,
     });
     await _settingsRepository.setQueueLoopModeEnabled(enabled);
+    _localModeChanges.add(local.playbackModes);
   }
 
   Future<void> toggleSkipSilence(bool enable) {

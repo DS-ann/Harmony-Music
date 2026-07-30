@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:auth0_flutter/auth0_flutter.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -19,6 +21,13 @@ class Auth0Service implements AuthServiceContract {
   // this callback. Unlike mobile, Windows cannot discover a custom scheme
   // dynamically from the bundled .env file before protocol activation.
   static const _windowsCallbackScheme = 'harmonymusic';
+  static const _accountSelectionLoginParameters = <String, String>{
+    // Force Auth0 to authenticate again instead of silently reusing its SSO
+    // session. The Google connection has a static upstream
+    // prompt=select_account setting, so reaching Google opens its account
+    // chooser while this value remains scoped to Auth0 reauthentication.
+    'prompt': 'login',
+  };
 
   Auth0Service._(
     this._auth0,
@@ -86,7 +95,8 @@ class Auth0Service implements AuthServiceContract {
     try {
       final credentials = await _auth0.credentialsManager.credentials();
       return credentials.user;
-    } catch (_) {
+    } catch (error) {
+      _logSessionRestoreFailure(error);
       return null;
     }
   }
@@ -94,7 +104,7 @@ class Auth0Service implements AuthServiceContract {
   /// Open Auth0 Universal Login (hosted page — handles both login & register).
   ///
   /// Returns the authenticated user profile, or throws on failure.
-  Future<UserProfile> login() async {
+  Future<UserProfile> login({bool chooseAccount = false}) async {
     if (!isSupportedPlatform) {
       throw UnsupportedError('Auth0 login is not supported on this platform.');
     }
@@ -104,17 +114,22 @@ class Auth0Service implements AuthServiceContract {
       );
     }
     const scopes = {'openid', 'profile', 'email', 'offline_access'};
+    final parameters = chooseAccount
+        ? _accountSelectionLoginParameters
+        : const <String, String>{};
     final credentials = RuntimePlatform.isWindows
         ? await _auth0.windowsWebAuthentication().login(
             appCustomURL: '$_callbackScheme://callback',
             audience: _audience.isEmpty ? null : _audience,
             scopes: scopes,
+            parameters: parameters,
           )
         : await _auth0
               .webAuthentication(scheme: _scheme)
               .login(
                 audience: _audience.isEmpty ? null : _audience,
                 scopes: scopes,
+                parameters: parameters,
               );
     await _persistCredentials(credentials);
     return credentials.user;
@@ -160,6 +175,16 @@ class Auth0Service implements AuthServiceContract {
     }
   }
 
+  void _logSessionRestoreFailure(Object error) {
+    if (!kDebugMode) return;
+    // Deliberately log only the exception type. Auth SDK exception messages
+    // can contain request details and must never expose tokens or user data.
+    developer.log(
+      'Auth0 session restoration failed (${error.runtimeType}).',
+      name: 'harmony.auth',
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Persistence helpers
   // ---------------------------------------------------------------------------
@@ -194,7 +219,8 @@ class Auth0Service implements AuthServiceContract {
       if (raw == null) return null;
       final map = jsonDecode(raw) as Map<String, dynamic>;
       return UserProfile.fromMap(map['user'] as Map<String, dynamic>);
-    } catch (_) {
+    } catch (error) {
+      _logSessionRestoreFailure(error);
       return null;
     }
   }

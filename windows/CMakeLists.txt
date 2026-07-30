@@ -112,6 +112,28 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     COMPONENT Runtime)
 endif()
 
+# auth0_flutter links vcpkg's cpprestsdk, OpenSSL, and Boost DLLs but declares
+# none of them in PLUGIN_BUNDLED_LIBRARIES. vcpkg's normal app-local step puts
+# them beside the plugin's intermediate DLL, not in Flutter's runnable bundle.
+# Install the complete vcpkg runtime bin so transitive dependencies (Brotli,
+# zlib, and future port changes) cannot be omitted from the packaged app.
+if(DEFINED _VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+  set(VCPKG_RELEASE_BIN_DIR
+      "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+  set(VCPKG_DEBUG_BIN_DIR
+      "${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
+  install(DIRECTORY "${VCPKG_RELEASE_BIN_DIR}/"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    CONFIGURATIONS Profile;Release
+    COMPONENT Runtime
+    FILES_MATCHING PATTERN "*.dll")
+  install(DIRECTORY "${VCPKG_DEBUG_BIN_DIR}/"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    CONFIGURATIONS Debug
+    COMPONENT Runtime
+    FILES_MATCHING PATTERN "*.dll")
+endif()
+
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.
 set(FLUTTER_ASSET_DIR_NAME "flutter_assets")

@@ -282,6 +282,7 @@
   "authUnsupportedPlatform": "Account login is not supported on this platform.",
   "loggedInAs": "Logged in as",
   "loginOrRegister": "Login / Register",
+  "useAnotherAccount": "Use another account",
   "logout": "Logout",
   "library": "Library",
   "createNewPlaylist": "Create new playlist",

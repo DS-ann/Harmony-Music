@@ -23,6 +23,82 @@ constexpr wchar_t kSingleInstanceMutex[] =
 constexpr wchar_t kRedirectPipeName[] =
     L"\\\\.\\pipe\\harmony_music_auth0_callback";
 constexpr wchar_t kCallbackPrefix[] = L"harmonymusic://callback";
+constexpr wchar_t kProtocolRegistryKey[] =
+    L"Software\\Classes\\harmonymusic";
+constexpr wchar_t kProtocolCommandRegistryKey[] =
+    L"Software\\Classes\\harmonymusic\\shell\\open\\command";
+
+bool HasRegisteredProtocolHandler() {
+  DWORD value_size = 0;
+  const LSTATUS status =
+      RegGetValueW(HKEY_CURRENT_USER, kProtocolCommandRegistryKey, nullptr,
+                   RRF_RT_REG_SZ, nullptr, nullptr, &value_size);
+  return status == ERROR_SUCCESS && value_size > sizeof(wchar_t);
+}
+
+std::wstring CurrentExecutablePath() {
+  std::vector<wchar_t> buffer(MAX_PATH);
+  while (true) {
+    const DWORD length = GetModuleFileNameW(
+        nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0) {
+      return {};
+    }
+    if (length < buffer.size() - 1) {
+      return std::wstring(buffer.data(), length);
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+}
+
+bool SetDefaultRegistryString(HKEY key, const std::wstring& value) {
+  const auto* bytes = reinterpret_cast<const BYTE*>(value.c_str());
+  const DWORD byte_count =
+      static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t));
+  return RegSetValueExW(key, nullptr, 0, REG_SZ, bytes, byte_count) ==
+         ERROR_SUCCESS;
+}
+
+void RegisterProtocolHandlerIfMissing() {
+  // The installer owns the normal association. Preserve it when present so a
+  // local Debug build never hijacks callbacks from an installed Release app.
+  if (HasRegisteredProtocolHandler()) {
+    return;
+  }
+
+  const std::wstring executable = CurrentExecutablePath();
+  if (executable.empty()) {
+    return;
+  }
+
+  HKEY protocol_key = nullptr;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kProtocolRegistryKey, 0, nullptr, 0,
+                      KEY_SET_VALUE, nullptr, &protocol_key, nullptr) !=
+      ERROR_SUCCESS) {
+    return;
+  }
+  const bool protocol_name_written =
+      SetDefaultRegistryString(protocol_key, L"URL:Harmony Music Protocol");
+  const wchar_t empty_value[] = L"";
+  const bool url_protocol_written =
+      RegSetValueExW(protocol_key, L"URL Protocol", 0, REG_SZ,
+                     reinterpret_cast<const BYTE*>(empty_value),
+                     sizeof(empty_value)) == ERROR_SUCCESS;
+  RegCloseKey(protocol_key);
+  if (!protocol_name_written || !url_protocol_written) {
+    return;
+  }
+
+  HKEY command_key = nullptr;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kProtocolCommandRegistryKey, 0,
+                      nullptr, 0, KEY_SET_VALUE, nullptr, &command_key,
+                      nullptr) != ERROR_SUCCESS) {
+    return;
+  }
+  const std::wstring command = L"\"" + executable + L"\" \"%1\"";
+  SetDefaultRegistryString(command_key, command);
+  RegCloseKey(command_key);
+}
 
 // Give the callback pipe read/write access only to the signed-in Windows user.
 // A protocol activation is untrusted input, so the runner also checks its exact
@@ -160,6 +236,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
 
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  RegisterProtocolHandlerIfMissing();
 
   int argument_count = 0;
   LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argument_count);
