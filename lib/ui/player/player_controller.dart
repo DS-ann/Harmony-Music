@@ -94,6 +94,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   Animation<double>? gesturePlayerStateAnimation;
   bool isRadioModeOn = false;
   String? radioContinuationParam;
+  int _playNowSelectionGeneration = 0;
   dynamic radioInitiatorItem;
   Timer? sleepTimer;
   WindowsAudioService? _windowsAudioService;
@@ -256,7 +257,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
   /// [mergeResolvedQueueItems] as metadata resolves. The full queue matters
   /// beyond cosmetics: next/previous are enabled by comparing the current song
   /// against `currentQueue.last`, so a one-item mirror disables both buttons.
-  void applyRemoteQueue(
+  bool applyRemoteQueue(
     List<MediaItem> queue, {
     required int index,
     required int positionMs,
@@ -267,7 +268,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
     final safeIndex = queue.isEmpty ? -1 : index.clamp(0, queue.length - 1);
     if (pendingSongId != null &&
         (safeIndex < 0 || queue[safeIndex].id != pendingSongId)) {
-      return;
+      return false;
     }
     _cloudRemoteStateActive = true;
     currentQueue
@@ -285,6 +286,7 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       'publishedAtMs': DateTime.now().millisecondsSinceEpoch,
     });
     _notifyPlayerChanged();
+    return true;
   }
 
   /// Follows the audio target moving within a queue we already hold, without
@@ -1634,21 +1636,30 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       return;
     }
 
+    // Expanding a selection into its watch queue is a network request. A
+    // searched song can therefore finish after a newer Recently Played tap and
+    // otherwise send its queue/handoff last, making the older song win. Every
+    // play-now intent claims a generation before starting any asynchronous
+    // work; late results are discarded before they can mutate either player.
+    final selectionGeneration = ++_playNowSelectionGeneration;
+
     /// update playing from value
     playingFrom.value = PlayingFrom(type: PlayingFromType.SELECTION, name: '');
 
     /// set global radio mode flag
     isRadioModeOn = radio;
 
-    final queueUpdate = Future.delayed(Duration.zero, () async {
+    final queueUpdate = Future<List<MediaItem>?>.delayed(Duration.zero, () async {
       final content = await _musicServices.getWatchPlaylist(
         videoId: mediaItem?.id ?? "",
         radio: radio,
         playlistId: playlistId,
       );
+      if (selectionGeneration != _playNowSelectionGeneration) return null;
       radioContinuationParam = content['additionalParamsForNext'];
       final tracks = List<MediaItem>.from(content['tracks']);
       await _playbackCommands.updateQueue(tracks);
+      if (selectionGeneration != _playNowSelectionGeneration) return null;
       if (isShuffleModeEnabled.value) {
         await _playbackCommands.shuffleFromIndex(0);
       }
@@ -1665,13 +1676,21 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
 
     if (playlistId != null) {
       unawaited(_playerPanelCheck());
-      await queueUpdate;
+      final tracks = await queueUpdate;
+      if (tracks == null ||
+          selectionGeneration != _playNowSelectionGeneration) {
+        return;
+      }
       await _playbackCommands.playByIndex(0);
       return;
     }
 
     unawaited(
       queueUpdate.then((value) async {
+        if (value == null ||
+            selectionGeneration != _playNowSelectionGeneration) {
+          return;
+        }
         if (_settingsRepository.getDiscoverContentType() == "BOLI") {
           await _homeScreenController.changeDiscoverContent(
             "BOLI",
@@ -1689,6 +1708,10 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
     var transitionIndex = 0;
     if (_playbackCommands.isRemoteControlActive) {
       final remoteQueue = await queueUpdate;
+      if (remoteQueue == null ||
+          selectionGeneration != _playNowSelectionGeneration) {
+        return;
+      }
       final remoteIndex = remoteQueue.indexWhere(
         (item) => item.id == mediaItem.id,
       );
@@ -1731,6 +1754,9 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       return;
     }
 
+    // A playlist/album tap also supersedes any standalone selection whose
+    // watch-queue lookup is still running.
+    _playNowSelectionGeneration++;
     isRadioModeOn = false;
     //open player pane,set current song and push first song into playing list,
 
@@ -1871,7 +1897,11 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
       //Will add song just below the current song
       (currentIndex == currentQueue.length - 1)
           ? await enqueueSong(song)
-          : await _playbackCommands.addPlayNextItem(song);
+          : await _playbackCommands.addPlayNextItem(
+              song,
+              remoteQueue: currentQueue,
+              currentVideoId: currentSong.value?.id,
+            );
     }
   }
 
@@ -1942,6 +1972,8 @@ class PlayerController extends ChangeNotifier implements TickerProvider {
     await _playbackCommands.reorderQueue(
       oldIndex: oldIndex,
       newIndex: newIndex,
+      remoteQueue: currentQueue,
+      currentVideoId: currentSong.value?.id,
     );
   }
 

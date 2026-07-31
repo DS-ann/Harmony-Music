@@ -1,6 +1,7 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harmonymusic/domain/repositories/settings_repository.dart';
+import 'package:harmonymusic/services/cloud/cloud_playback_gateway.dart';
 import 'package:harmonymusic/services/playback_command_service.dart';
 
 /// The handoff regression: a device that is controlling a peer and then becomes
@@ -131,6 +132,106 @@ void main() {
       expect(commands.local.progressFrame()['loading'], isTrue);
       expect(commands.progressFrame()['loading'], isTrue);
     });
+
+    test('remote Play next stays anchored to the current song', () async {
+      final gateway = _RecordingGateway();
+      commands = PlaybackCommandService(
+        audioHandler: handler,
+        settingsRepository: _FakeSettings(),
+        cloudSync: gateway,
+      );
+      final queue = [
+        _song('aaaaaaaaaaa'),
+        _song('bbbbbbbbbbb'),
+        _song('ccccccccccc'),
+      ];
+
+      await commands.startSharedSession(
+        targetDeviceId: 'peer-device',
+        queue: queue,
+        index: 1,
+        positionMs: 0,
+        playing: true,
+      );
+      await commands.addPlayNextItem(_song('ddddddddddd'));
+
+      expect(gateway.lastCommandType, 'queueUpdate');
+      expect(gateway.lastCommandPayload?['queueIds'], [
+        'aaaaaaaaaaa',
+        'bbbbbbbbbbb',
+        'ddddddddddd',
+        'ccccccccccc',
+      ]);
+      expect(gateway.lastCommandPayload?['currentSongId'], 'bbbbbbbbbbb');
+      expect(gateway.lastCommandPayload?['index'], 1);
+    });
+
+    test('remote existing-song Play next sends the reordered queue', () async {
+      final gateway = _RecordingGateway();
+      commands = PlaybackCommandService(
+        audioHandler: handler,
+        settingsRepository: _FakeSettings(),
+        cloudSync: gateway,
+      );
+      final queue = [
+        _song('aaaaaaaaaaa'),
+        _song('bbbbbbbbbbb'),
+        _song('ccccccccccc'),
+        _song('ddddddddddd'),
+      ];
+
+      await commands.startSharedSession(
+        targetDeviceId: 'peer-device',
+        queue: queue,
+        index: 1,
+        positionMs: 0,
+        playing: true,
+      );
+      await commands.reorderQueue(oldIndex: 3, newIndex: 2);
+
+      expect(gateway.lastCommandType, 'queueUpdate');
+      expect(gateway.lastCommandPayload?['queueIds'], [
+        'aaaaaaaaaaa',
+        'bbbbbbbbbbb',
+        'ddddddddddd',
+        'ccccccccccc',
+      ]);
+      expect(gateway.lastCommandPayload?['currentSongId'], 'bbbbbbbbbbb');
+      expect(gateway.lastCommandPayload?['index'], 1);
+    });
+
+    test('remote shuffle keeps the selected playlist song first', () async {
+      final gateway = _RecordingGateway();
+      commands = PlaybackCommandService(
+        audioHandler: handler,
+        settingsRepository: _FakeSettings(),
+        cloudSync: gateway,
+      );
+      final queue = [
+        _song('aaaaaaaaaaa'),
+        _song('bbbbbbbbbbb'),
+        _song('ccccccccccc'),
+        _song('ddddddddddd'),
+      ];
+
+      await commands.startSharedSession(
+        targetDeviceId: 'peer-device',
+        queue: queue,
+        index: 0,
+        positionMs: 0,
+        playing: true,
+      );
+      await commands.shuffleFromIndex(1);
+
+      expect(gateway.lastCommandType, 'queueUpdate');
+      final shuffledIds = List<String>.from(
+        gateway.lastCommandPayload?['queueIds'] as List,
+      );
+      expect(shuffledIds.first, 'bbbbbbbbbbb');
+      expect(shuffledIds, unorderedEquals(queue.map((song) => song.id)));
+      expect(gateway.lastCommandPayload?['currentSongId'], 'bbbbbbbbbbb');
+      expect(gateway.lastCommandPayload?['index'], 0);
+    });
   });
 }
 
@@ -173,4 +274,32 @@ class _RecordingAudioHandler extends BaseAudioHandler {
     calls.add(name == 'playByIndex' ? 'playByIndex:${extras?['index']}' : name);
     return null;
   }
+}
+
+class _RecordingGateway implements CloudPlaybackGateway {
+  @override
+  String get deviceId => 'source-device';
+
+  String? lastCommandType;
+  Map<String, Object?>? lastCommandPayload;
+
+  @override
+  Future<String> startPlaybackSession({
+    required String targetDeviceId,
+    required Map<String, Object?> state,
+  }) async => 'session-1';
+
+  @override
+  Future<void> sendSessionCommand({
+    required String targetDeviceId,
+    required String type,
+    required Map<String, Object?> payload,
+  }) async {
+    lastCommandType = type;
+    lastCommandPayload = Map<String, Object?>.from(payload);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName} is not faked.');
 }

@@ -404,6 +404,11 @@
   ,"deviceControlUnavailable": "Device control is unavailable. Try again later."
   ,"cloudPlaybackReconnecting": "Reconnecting…"
   ,"tapToLeaveSync": "Synced — tap to leave"
+  ,"removeDevice": "Remove device"
+  ,"removeDeviceConfirmation": "Remove {deviceName} from your Harmony account? It will appear again if Harmony is opened on that device."
+  ,"@removeDeviceConfirmation": {"placeholders": {"deviceName": {"type": "String"}}}
+  ,"deviceRemoved": "Device removed."
+  ,"deviceRemovalFailed": "The device could not be removed. Try again later."
   ,"debugRefreshAuthToken": "Refresh Auth0 token"
   ,"debugRefreshAuthTokenDescription": "Debug only: silently request a fresh sign-in token."
   ,"debugAuthTokenRefreshed": "Auth0 token refreshed."

@@ -18,6 +18,20 @@
 
 namespace {
 
+#ifdef _DEBUG
+constexpr wchar_t kSingleInstanceMutex[] =
+    L"harmony_music_dev_single_instance_mutex";
+constexpr wchar_t kRedirectPipeName[] =
+    L"\\\\.\\pipe\\harmony_music_dev_auth0_callback";
+constexpr wchar_t kCallbackPrefix[] = L"harmonymusic-dev://callback";
+constexpr wchar_t kProtocolRegistryKey[] =
+    L"Software\\Classes\\harmonymusic-dev";
+constexpr wchar_t kProtocolCommandRegistryKey[] =
+    L"Software\\Classes\\harmonymusic-dev\\shell\\open\\command";
+constexpr wchar_t kProtocolDisplayName[] =
+    L"URL:Harmony Music Dev Protocol";
+constexpr wchar_t kWindowTitle[] = L"Harmony Music Dev";
+#else
 constexpr wchar_t kSingleInstanceMutex[] =
     L"harmony_music_single_instance_mutex";
 constexpr wchar_t kRedirectPipeName[] =
@@ -27,6 +41,9 @@ constexpr wchar_t kProtocolRegistryKey[] =
     L"Software\\Classes\\harmonymusic";
 constexpr wchar_t kProtocolCommandRegistryKey[] =
     L"Software\\Classes\\harmonymusic\\shell\\open\\command";
+constexpr wchar_t kProtocolDisplayName[] = L"URL:Harmony Music Protocol";
+constexpr wchar_t kWindowTitle[] = L"Harmony Music";
+#endif
 
 bool HasRegisteredProtocolHandler() {
   DWORD value_size = 0;
@@ -78,7 +95,7 @@ void RegisterProtocolHandlerIfMissing() {
     return;
   }
   const bool protocol_name_written =
-      SetDefaultRegistryString(protocol_key, L"URL:Harmony Music Protocol");
+      SetDefaultRegistryString(protocol_key, kProtocolDisplayName);
   const wchar_t empty_value[] = L"";
   const bool url_protocol_written =
       RegSetValueExW(protocol_key, L"URL Protocol", 0, REG_SZ,
@@ -150,7 +167,8 @@ bool IsHarmonyCallback(const std::wstring& uri) {
 }
 
 void BringExistingWindowToFront() {
-  const HWND window = FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", nullptr);
+  const HWND window =
+      FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", kWindowTitle);
   if (window != nullptr) {
     ShowWindow(window, SW_RESTORE);
     SetForegroundWindow(window);
@@ -274,7 +292,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"Harmony Music", origin, size)) {
+  if (!window.Create(kWindowTitle, origin, size)) {
     CloseHandle(mutex);
     return EXIT_FAILURE;
   }

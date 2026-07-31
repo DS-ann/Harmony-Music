@@ -132,6 +132,9 @@ class CloudSyncCoordinator implements CloudPlaybackGateway {
   Future<List<CloudPlaybackDevice>> playbackDevices() =>
       _client.playbackDevices(_repository.deviceId);
 
+  Future<void> removePlaybackDevice(String deviceId) =>
+      _client.removePlaybackDevice(deviceId);
+
   Future<bool> handoffPlayback({
     required String targetDeviceId,
     required Map<String, Object?> payload,

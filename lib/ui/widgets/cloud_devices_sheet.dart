@@ -9,6 +9,7 @@ import '../../l10n/l10n.dart';
 import '../../app/providers/service_providers.dart';
 import '../../services/cloud/harmony_cloud_client.dart';
 import '../player/player_controller.dart';
+import 'awaitable_button.dart';
 
 Future<void> showCloudDevicesSheet(BuildContext context) =>
     showModalBottomSheet<void>(
@@ -29,6 +30,7 @@ class _CloudDevicesSheetState extends ConsumerState<_CloudDevicesSheet> {
 
   /// The device a handoff is currently in flight to, if any.
   String? _handingOffTo;
+  String? _removingDeviceId;
 
   @override
   void initState() {
@@ -140,9 +142,21 @@ class _CloudDevicesSheetState extends ConsumerState<_CloudDevicesSheet> {
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
+                      : !device.isCurrentDevice
+                      ? AwaitableIconButton(
+                          key: ValueKey('remove-device-${device.deviceId}'),
+                          tooltip: context.l10n.removeDevice,
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed:
+                              _handingOffTo == null && _removingDeviceId == null
+                              ? () => _removeDevice(context, device)
+                              : null,
+                        )
                       : null,
                   enabled:
-                      device.presence != 'unavailable' && _handingOffTo == null,
+                      device.presence != 'unavailable' &&
+                      _handingOffTo == null &&
+                      _removingDeviceId == null,
                   onTap:
                       device.presence == 'unavailable' || _handingOffTo != null
                       ? null
@@ -178,6 +192,55 @@ class _CloudDevicesSheetState extends ConsumerState<_CloudDevicesSheet> {
         'background' => context.l10n.deviceBackground,
         _ => context.l10n.deviceUnavailable,
       };
+
+  Future<void> _removeDevice(
+    BuildContext context,
+    CloudPlaybackDevice device,
+  ) async {
+    if (device.isCurrentDevice) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.l10n.removeDevice),
+        content: Text(dialogContext.l10n.removeDeviceConfirmation(device.name)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(dialogContext.l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(dialogContext.l10n.removeDevice),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    var removed = false;
+    setState(() => _removingDeviceId = device.deviceId);
+    try {
+      await ref
+          .read(authControllerProvider)
+          .removePlaybackDevice(device.deviceId);
+      removed = true;
+      if (mounted) setState(_loadDevices);
+    } catch (_) {
+      removed = false;
+    } finally {
+      if (mounted) setState(() => _removingDeviceId = null);
+    }
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          removed
+              ? context.l10n.deviceRemoved
+              : context.l10n.deviceRemovalFailed,
+        ),
+      ),
+    );
+  }
 
   Future<void> _handoff(
     BuildContext context,

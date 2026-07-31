@@ -12,9 +12,12 @@ import 'package:harmonymusic/data/repositories/cloud_sync_repository.dart';
 import 'package:harmonymusic/data/repositories/hive_playlist_repository.dart';
 import 'package:harmonymusic/domain/repositories/lyrics_repository.dart';
 import 'package:harmonymusic/main.dart' as app;
+import 'package:harmonymusic/services/app_contracts.dart';
+import 'package:harmonymusic/services/cloud/cloud_playback_gateway.dart';
 import 'package:harmonymusic/services/cloud/cloud_sync_coordinator.dart';
 import 'package:harmonymusic/services/cloud/harmony_cloud_client.dart';
 import 'package:harmonymusic/services/constant.dart';
+import 'package:harmonymusic/services/playback_command_service.dart';
 import 'package:harmonymusic/services/release_prompt.dart';
 import 'package:harmonymusic/utils/house_keeping.dart';
 import 'package:hive/hive.dart';
@@ -88,6 +91,8 @@ Future<TestAppHandle> bootTestApp(
   WidgetTester tester, {
   FakeAuthService? authService,
   LyricsRepository? lyricsRepository,
+  MusicServiceContract? musicService,
+  CloudPlaybackGateway? playbackGateway,
   Future<void> Function()? seedHive,
   bool cloudSyncEnabled = false,
 }) async {
@@ -111,6 +116,7 @@ Future<TestAppHandle> bootTestApp(
     BoxNames.songDownloads,
     BoxNames.songsUrlCache,
     BoxNames.appPrefs,
+    BoxNames.libFav,
     BoxNames.cloudSyncOutbox,
     BoxNames.cloudSyncState,
   ]) {
@@ -120,10 +126,21 @@ Future<TestAppHandle> bootTestApp(
 
   final auth = authService ?? FakeAuthService();
   final audioHandler = await _testAudioHandler();
+  PlaybackCommandService? bridgePlaybackCommands;
   final container = ProviderContainer(
     overrides: [
       audioHandlerProvider.overrideWithValue(audioHandler),
-      musicServiceContractProvider.overrideWithValue(FakeMusicService()),
+      musicServiceContractProvider.overrideWithValue(
+        musicService ?? FakeMusicService(),
+      ),
+      if (playbackGateway != null)
+        playbackCommandServiceProvider.overrideWith(
+          (ref) => bridgePlaybackCommands ??= PlaybackCommandService(
+            audioHandler: audioHandler,
+            settingsRepository: ref.read(settingsRepositoryProvider),
+            cloudSync: playbackGateway,
+          ),
+        ),
       if (lyricsRepository != null)
         lyricsRepositoryProvider.overrideWithValue(lyricsRepository),
       updateServiceContractProvider.overrideWithValue(

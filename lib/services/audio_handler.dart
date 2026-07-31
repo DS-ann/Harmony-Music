@@ -526,7 +526,9 @@ class MyAudioHandler extends BaseAudioHandler {
           ),
         );
 
-        if (RuntimePlatform.isAndroid && playing && !_lastPreloadPlaying) {
+        if (RuntimePlatform.supportsPlaybackPreloading &&
+            playing &&
+            !_lastPreloadPlaying) {
           _lastPreloadPlaying = true;
           _schedulePreloadWindow();
         } else if (!playing) {

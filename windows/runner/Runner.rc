@@ -72,6 +72,16 @@ IDI_APP_ICON            ICON                    "resources\\app_icon.ico"
 #define VERSION_AS_STRING "1.0.0"
 #endif
 
+#ifdef _DEBUG
+#define HARMONY_FILE_DESCRIPTION "harmonymusic_dev"
+#define HARMONY_INTERNAL_NAME "harmonymusic_dev"
+#define HARMONY_PRODUCT_NAME "harmonymusic_dev"
+#else
+#define HARMONY_FILE_DESCRIPTION "harmonymusic"
+#define HARMONY_INTERNAL_NAME "harmonymusic"
+#define HARMONY_PRODUCT_NAME "harmonymusic"
+#endif
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION VERSION_AS_NUMBER
  PRODUCTVERSION VERSION_AS_NUMBER
@@ -90,12 +100,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.anandnet" "\0"
-            VALUE "FileDescription", "harmonymusic" "\0"
+            VALUE "FileDescription", HARMONY_FILE_DESCRIPTION "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "harmonymusic" "\0"
+            VALUE "InternalName", HARMONY_INTERNAL_NAME "\0"
             VALUE "LegalCopyright", "Copyright (C) 2024 com.anandnet. All rights reserved." "\0"
             VALUE "OriginalFilename", "harmonymusic.exe" "\0"
-            VALUE "ProductName", "harmonymusic" "\0"
+            VALUE "ProductName", HARMONY_PRODUCT_NAME "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

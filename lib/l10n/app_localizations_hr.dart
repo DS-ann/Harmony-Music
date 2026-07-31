@@ -1284,6 +1284,21 @@ class AppLocalizationsHr extends AppLocalizations {
   String get tapToLeaveSync => 'Sinkronizirano — dodirni za prekid';
 
   @override
+  String get removeDevice => 'Ukloni uređaj';
+
+  @override
+  String removeDeviceConfirmation(String deviceName) {
+    return 'Ukloniti $deviceName s vašeg Harmony računa? Ponovno će se pojaviti ako se Harmony otvori na tom uređaju.';
+  }
+
+  @override
+  String get deviceRemoved => 'Uređaj je uklonjen.';
+
+  @override
+  String get deviceRemovalFailed =>
+      'Uređaj nije moguće ukloniti. Pokušajte ponovno kasnije.';
+
+  @override
   String get debugRefreshAuthToken => 'Osvježi Auth0 token';
 
   @override

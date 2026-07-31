@@ -485,8 +485,18 @@ class CloudPlaybackReceiver {
     required bool playing,
     bool isExplicitHandoff = false,
   }) {
+    final requestKey = _playbackStartKey(sessionId, state);
     final inFlight = _startingPlayback;
-    if (inFlight != null) return inFlight;
+    if (inFlight != null && _startingPlaybackKey == requestKey) {
+      return inFlight;
+    }
+    if (inFlight != null) {
+      // A new explicit handoff must not be queued behind a source that is
+      // stalled resolving or loading. The in-flight operation notices the
+      // generation change at each async boundary and cannot overwrite this
+      // newer selection when it eventually settles.
+      _targetPlaybackGeneration++;
+    }
 
     _appliedTargetSessionId = sessionId;
     final operation =
@@ -497,7 +507,9 @@ class CloudPlaybackReceiver {
           isExplicitHandoff: isExplicitHandoff,
         ).catchError((Object error, StackTrace stackTrace) {
           // Release the latch so a later snapshot retries resolution.
-          _appliedTargetSessionId = null;
+          if (_startingPlaybackKey == requestKey) {
+            _appliedTargetSessionId = null;
+          }
           CrashDiagnosticsService.instance.record(
             'cloud-playback',
             'Failed to start playback for incoming session',
@@ -507,13 +519,25 @@ class CloudPlaybackReceiver {
           );
         });
     _startingPlayback = operation;
+    _startingPlaybackKey = requestKey;
     _publishProgressFrame();
     return operation.whenComplete(() {
-      if (identical(_startingPlayback, operation)) _startingPlayback = null;
+      if (identical(_startingPlayback, operation)) {
+        _startingPlayback = null;
+        _startingPlaybackKey = null;
+      }
     });
   }
 
   Future<void>? _startingPlayback;
+  String? _startingPlaybackKey;
+
+  String _playbackStartKey(String sessionId, Map<String, dynamic> state) {
+    final queueIds = _queueIdsOf(state);
+    final index = _indexOf(state, queueIds.length);
+    return '$sessionId|${queueIds.join('|')}|$index';
+  }
+
   String? _targetSongIdOverride;
   int? _targetLoadingPositionMs;
   int? _targetLoadingDurationMs;
@@ -572,14 +596,15 @@ class CloudPlaybackReceiver {
         ).every((i) => _appliedQueueIds![i] == queueIds[i]);
 
     if (!sameQueue) {
-      _appliedQueueIds = List<String>.unmodifiable(queueIds);
-      player.applyRemoteQueue(
+      final queueApplied = player.applyRemoteQueue(
         queueIds.map(MediaItemBuilder.placeholder).toList(),
         index: index,
         positionMs: positionMs,
         durationMs: durationMs,
         playing: playing,
       );
+      if (!queueApplied) return;
+      _appliedQueueIds = List<String>.unmodifiable(queueIds);
       unawaited(_backfill(queueIds));
       return;
     }
@@ -1216,13 +1241,26 @@ class CloudPlaybackReceiver {
     return true;
   }
 
+  int _queueUpdateGeneration = 0;
+
   Future<void> _applyQueueUpdate(Map<String, dynamic> payload) async {
+    final generation = _targetPlaybackGeneration;
+    final queueUpdateGeneration = ++_queueUpdateGeneration;
     final queueIds = _queueIdsOf(payload);
     if (queueIds.isEmpty) {
+      if (generation != _targetPlaybackGeneration ||
+          queueUpdateGeneration != _queueUpdateGeneration) {
+        return;
+      }
       await _local.clearQueue();
+      _appliedQueueIds = const [];
       return;
     }
     final resolved = await _metadata.resolveBatch(queueIds);
+    if (generation != _targetPlaybackGeneration ||
+        queueUpdateGeneration != _queueUpdateGeneration) {
+      return;
+    }
     final items = queueIds
         .map((id) => resolved[id])
         .whereType<MediaItem>()
@@ -1230,6 +1268,7 @@ class CloudPlaybackReceiver {
     if (items.isEmpty)
       throw const FormatException('Unresolvable queue update.');
     await _local.updateQueue(items);
+    _appliedQueueIds = List<String>.unmodifiable(items.map((item) => item.id));
   }
 
   // --------------------------------------------------------------- diagnostics

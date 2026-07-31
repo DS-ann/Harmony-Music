@@ -6,6 +6,7 @@ import '../domain/repositories/settings_repository.dart';
 import 'cloud/playback_modes.dart';
 import 'cloud/cloud_playback_gateway.dart';
 import 'local_playback_commands.dart';
+import 'playback_queue_order.dart';
 import 'playback_video_id.dart';
 import 'previous_track_policy.dart';
 
@@ -34,6 +35,7 @@ class PlaybackCommandService {
   final CloudPlaybackGateway? _cloudSync;
   String? _remoteTargetDeviceId;
   List<MediaItem> _remoteQueue = const [];
+  String? _remoteCurrentVideoId;
   final StreamController<String?> _localSongSelections =
       StreamController<String?>.broadcast(sync: true);
   final StreamController<CloudPlaybackModes> _localModeChanges =
@@ -135,15 +137,16 @@ class PlaybackCommandService {
     // The source is intentionally paused before this call by the UI. Cloud
     // stores ordered ids only; the target resolves both metadata and playable
     // media for itself.
+    final state = sessionState(
+      queue: queue,
+      index: index,
+      queueVideoIds: queueVideoIds,
+      currentVideoId: currentVideoId,
+    );
     final sessionId = await cloud.startPlaybackSession(
       targetDeviceId: targetDeviceId,
       state: {
-        ...sessionState(
-          queue: queue,
-          index: index,
-          queueVideoIds: queueVideoIds,
-          currentVideoId: currentVideoId,
-        ),
+        ...state,
         'positionMs': positionMs,
         'playing': playing,
         if (queue[index].duration != null)
@@ -153,6 +156,7 @@ class PlaybackCommandService {
     if (sessionId.isEmpty) return null;
     _remoteTargetDeviceId = targetDeviceId;
     _remoteQueue = List<MediaItem>.from(queue);
+    _remoteCurrentVideoId = state['currentSongId']?.toString();
     return sessionId;
   }
 
@@ -167,26 +171,25 @@ class PlaybackCommandService {
   }) async {
     final cloud = _cloudSync;
     if (cloud == null) return;
+    final state = sessionState(
+      queue: queue,
+      index: index,
+      queueVideoIds: queueVideoIds,
+      currentVideoId: currentVideoId,
+    );
     await cloud.switchPlaybackTarget(
       targetDeviceId: targetDeviceId,
-      state: {
-        ...sessionState(
-          queue: queue,
-          index: index,
-          queueVideoIds: queueVideoIds,
-          currentVideoId: currentVideoId,
-        ),
-        'positionMs': positionMs,
-        'playing': playing,
-      },
+      state: {...state, 'positionMs': positionMs, 'playing': playing},
     );
     _remoteTargetDeviceId = targetDeviceId;
     _remoteQueue = List<MediaItem>.from(queue);
+    _remoteCurrentVideoId = state['currentSongId']?.toString();
   }
 
   void stopRemoteControl() {
     _remoteTargetDeviceId = null;
     _remoteQueue = const [];
+    _remoteCurrentVideoId = null;
   }
 
   Future<void> play() => _sendRemoteOrLocal('play', _audioHandler.play);
@@ -203,28 +206,34 @@ class PlaybackCommandService {
     {'positionMs': position.inMilliseconds},
   );
 
-  Future<void> next({String? desiredVideoId}) {
+  Future<void> next({String? desiredVideoId}) async {
     final target = _remoteTargetDeviceId;
     if (target == null || _cloudSync == null) {
       _localSongSelections.add(null);
+      await _audioHandler.skipToNext();
+      return;
     }
-    return _sendRemoteOrLocal('next', _audioHandler.skipToNext, {
+    await _sendRemoteCommand('next', {
       if (desiredVideoId != null) 'desiredVideoId': desiredVideoId,
     });
+    if (desiredVideoId != null) _remoteCurrentVideoId = desiredVideoId;
   }
 
   Future<void> previous({
     PreviousTrackIntent? remoteIntent,
     String? desiredVideoId,
-  }) {
+  }) async {
     final target = _remoteTargetDeviceId;
     if (target == null || _cloudSync == null) {
       _localSongSelections.add(desiredVideoId);
+      await _audioHandler.skipToPrevious();
+      return;
     }
-    return _sendRemoteOrLocal('previous', _audioHandler.skipToPrevious, {
+    await _sendRemoteCommand('previous', {
       if (remoteIntent != null) 'intent': remoteIntent.name,
       if (desiredVideoId != null) 'desiredVideoId': desiredVideoId,
     });
+    if (desiredVideoId != null) _remoteCurrentVideoId = desiredVideoId;
   }
 
   Future<void> playPause({required bool isPlaying}) {
@@ -314,19 +323,22 @@ class PlaybackCommandService {
   ) async {
     final cloud = _cloudSync;
     if (cloud == null) return;
+    final state = sessionState(queue: queue, index: index);
     // Ids only: the target resolves the song itself, usually straight from its
     // own cache. Sending the whole queue keeps next/previous working there.
     await cloud.sendSessionCommand(
       targetDeviceId: targetDeviceId,
       type: 'handoff',
       payload: {
-        ...sessionState(queue: queue, index: index),
+        ...state,
         'positionMs': positionMs,
         'playing': true,
         if (queue[index].duration != null)
           'initialDurationMs': queue[index].duration!.inMilliseconds,
       },
     );
+    _remoteQueue = List<MediaItem>.from(queue);
+    _remoteCurrentVideoId = state['currentSongId']?.toString();
   }
 
   Future<void> addQueueItem(MediaItem mediaItem) {
@@ -369,12 +381,31 @@ class PlaybackCommandService {
     return _audioHandler.customAction("shuffleQueue");
   }
 
-  Future<void> reorderQueue({required int oldIndex, required int newIndex}) {
+  Future<void> reorderQueue({
+    required int oldIndex,
+    required int newIndex,
+    List<MediaItem>? remoteQueue,
+    String? currentVideoId,
+  }) {
     if (_remoteTargetDeviceId != null) {
-      return _sendRemoteCommand('reorderQueue', {
-        'oldIndex': oldIndex,
-        'newIndex': newIndex,
-      });
+      if (remoteQueue != null) {
+        _remoteQueue = List<MediaItem>.from(remoteQueue);
+      }
+      if (currentVideoId != null) {
+        _remoteCurrentVideoId = currentVideoId;
+      }
+      if (oldIndex < 0 ||
+          oldIndex >= _remoteQueue.length ||
+          newIndex < 0 ||
+          newIndex > _remoteQueue.length) {
+        return Future<void>.value();
+      }
+      final reordered = List<MediaItem>.from(_remoteQueue);
+      final item = reordered.removeAt(oldIndex);
+      final adjustedNewIndex = oldIndex < newIndex ? newIndex - 1 : newIndex;
+      reordered.insert(adjustedNewIndex, item);
+      _remoteQueue = reordered;
+      return _sendRemoteQueue();
     }
     return _audioHandler.customAction("reorderQueue", {
       "oldIndex": oldIndex,
@@ -382,12 +413,26 @@ class PlaybackCommandService {
     });
   }
 
-  Future<void> addPlayNextItem(MediaItem mediaItem) {
+  Future<void> addPlayNextItem(
+    MediaItem mediaItem, {
+    List<MediaItem>? remoteQueue,
+    String? currentVideoId,
+  }) {
     if (_remoteTargetDeviceId != null) {
+      if (remoteQueue != null) {
+        _remoteQueue = List<MediaItem>.from(remoteQueue);
+      }
+      if (currentVideoId != null) {
+        _remoteCurrentVideoId = currentVideoId;
+      }
+      final currentIndex = _remoteQueue.indexWhere(
+        (song) => song.id == _remoteCurrentVideoId,
+      );
+      final insertionIndex = currentIndex < 0 ? 1 : currentIndex + 1;
       _remoteQueue = [
-        ..._remoteQueue.take(1),
+        ..._remoteQueue.take(insertionIndex),
         mediaItem,
-        ..._remoteQueue.skip(1),
+        ..._remoteQueue.skip(insertionIndex),
       ];
       return _sendRemoteQueue();
     }
@@ -397,6 +442,17 @@ class PlaybackCommandService {
   }
 
   Future<void> shuffleFromIndex(int index) {
+    if (_remoteTargetDeviceId != null) {
+      if (index < 0 || index >= _remoteQueue.length) {
+        return Future<void>.value();
+      }
+      _remoteQueue = PlaybackQueueOrder.shuffledFromCurrent(
+        _remoteQueue,
+        index,
+      );
+      _remoteCurrentVideoId = _remoteQueue.first.id;
+      return _sendRemoteQueue();
+    }
     return _audioHandler.customAction("shuffleCmd", {"index": index});
   }
 
@@ -460,10 +516,15 @@ class PlaybackCommandService {
     return _audioHandler.customAction("setVolume", {"value": value});
   }
 
-  Future<void> _sendRemoteQueue() => _sendRemoteCommand(
-    'queueUpdate',
-    sessionState(queue: _remoteQueue, index: 0),
-  );
+  Future<void> _sendRemoteQueue() async {
+    final state = sessionState(
+      queue: _remoteQueue,
+      index: 0,
+      currentVideoId: _remoteCurrentVideoId,
+    );
+    await _sendRemoteCommand('queueUpdate', state);
+    _remoteCurrentVideoId = state['currentSongId']?.toString();
+  }
 
   Future<void> _sendRemoteCommand(
     String type, [

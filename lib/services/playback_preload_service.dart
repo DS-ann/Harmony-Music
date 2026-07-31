@@ -34,7 +34,7 @@ class PlaybackPreloadService {
   Future<void> init() => _manager.init();
 
   bool get isEnabled {
-    if (!isAndroidPlatform) return false;
+    if (!isPlaybackPreloadPlatform) return false;
     return _playbackMode() == PlaybackMode.preloaded && range > 0;
   }
 

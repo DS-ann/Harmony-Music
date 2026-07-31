@@ -404,6 +404,11 @@
   ,"deviceControlUnavailable": "Upravljanje uređajem trenutačno nije dostupno. Pokušajte kasnije."
   ,"cloudPlaybackReconnecting": "Ponovno povezivanje…"
   ,"tapToLeaveSync": "Sinkronizirano — dodirni za prekid"
+  ,"removeDevice": "Ukloni uređaj"
+  ,"removeDeviceConfirmation": "Ukloniti {deviceName} s vašeg Harmony računa? Ponovno će se pojaviti ako se Harmony otvori na tom uređaju."
+  ,"@removeDeviceConfirmation": {"placeholders": {"deviceName": {"type": "String"}}}
+  ,"deviceRemoved": "Uređaj je uklonjen."
+  ,"deviceRemovalFailed": "Uređaj nije moguće ukloniti. Pokušajte ponovno kasnije."
   ,"debugRefreshAuthToken": "Osvježi Auth0 token"
   ,"debugRefreshAuthTokenDescription": "Samo za debug: tiho zatraži novi token za prijavu."
   ,"debugAuthTokenRefreshed": "Auth0 token je osvježen."

@@ -20,7 +20,8 @@ class Auth0Service implements AuthServiceContract {
   // The Windows runner and installed protocol registration are compiled with
   // this callback. Unlike mobile, Windows cannot discover a custom scheme
   // dynamically from the bundled .env file before protocol activation.
-  static const _windowsCallbackScheme = 'harmonymusic';
+  static String get _windowsCallbackScheme =>
+      kDebugMode ? 'harmonymusic-dev' : 'harmonymusic';
   static const _accountSelectionLoginParameters = <String, String>{
     // Force Auth0 to authenticate again instead of silently reusing its SSO
     // session. The Google connection has a static upstream

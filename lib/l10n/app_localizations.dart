@@ -2504,6 +2504,30 @@ abstract class AppLocalizations {
   /// **'Synced — tap to leave'**
   String get tapToLeaveSync;
 
+  /// No description provided for @removeDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove device'**
+  String get removeDevice;
+
+  /// No description provided for @removeDeviceConfirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {deviceName} from your Harmony account? It will appear again if Harmony is opened on that device.'**
+  String removeDeviceConfirmation(String deviceName);
+
+  /// No description provided for @deviceRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Device removed.'**
+  String get deviceRemoved;
+
+  /// No description provided for @deviceRemovalFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The device could not be removed. Try again later.'**
+  String get deviceRemovalFailed;
+
   /// No description provided for @debugRefreshAuthToken.
   ///
   /// In en, this message translates to:

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:harmonymusic/models/hm_streaming_data.dart';
 import 'package:harmonymusic/services/playback_preload_manager.dart';
@@ -162,7 +163,72 @@ void main() {
 
       expect(await preloadDirectory.list().toList(), isEmpty);
     });
+
+    test('downloads a nearby song prefix on Windows', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        request.response.statusCode = HttpStatus.partialContent;
+        request.response.headers.contentType = ContentType('audio', 'webm');
+        request.response.headers.set(
+          HttpHeaders.contentRangeHeader,
+          'bytes 0-262143/1048576',
+        );
+        request.response.add(List<int>.filled(262144, 1));
+        await request.response.close();
+      });
+      var resolvedSongId = '';
+      final manager = PlaybackPreloadManager(
+        preloadDirectory: preloadDirectory,
+        resolveStreamInfo:
+            (
+              songId, {
+              generateNewUrl = false,
+              offlineReplacementUrl = false,
+            }) async {
+              resolvedSongId = songId;
+              return _streamInfo(
+                'http://${server.address.address}:${server.port}/$songId.webm',
+              );
+            },
+      );
+      await manager.init();
+
+      await manager.update(
+        queue: const [
+          MediaItem(id: 'current-song', title: 'Current song'),
+          MediaItem(id: 'next-song', title: 'Next song'),
+        ],
+        candidateIndices: const [1],
+        range: 1,
+        isPlaying: true,
+        currentIndex: 0,
+      );
+      await _waitUntil(
+        () async => (await preloadDirectory.list().toList())
+            .whereType<File>()
+            .any((file) => file.path.endsWith('next-song.prefix')),
+      );
+
+      expect(resolvedSongId, 'next-song');
+      final prefix = File('${preloadDirectory.path}/next-song.prefix');
+      expect(await prefix.exists(), isTrue);
+      expect(await prefix.length(), greaterThan(0));
+    });
   });
+}
+
+Future<void> _waitUntil(
+  Future<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 3),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!await condition() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+  expect(await condition(), isTrue);
 }
 
 HMStreamingData _streamInfo(String url) {

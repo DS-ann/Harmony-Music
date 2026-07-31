@@ -96,7 +96,7 @@ class PlaybackPreloadManager {
     required bool isPlaying,
     required int? currentIndex,
   }) async {
-    if (!isAndroidPlatform || range <= 0 || !isPlaying) {
+    if (!isPlaybackPreloadPlatform || range <= 0 || !isPlaying) {
       await clear();
       return;
     }
