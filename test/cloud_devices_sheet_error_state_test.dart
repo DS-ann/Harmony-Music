@@ -17,4 +17,16 @@ void main() {
     expect(sheet, contains('try {'));
     expect(client, contains('connectTimeout: const Duration(seconds: 15)'));
   });
+
+  test('device picker removes only non-current devices after confirmation', () {
+    final sheet = File(
+      'lib/ui/widgets/cloud_devices_sheet.dart',
+    ).readAsStringSync();
+
+    expect(sheet, contains('AwaitableIconButton'));
+    expect(sheet, contains('!device.isCurrentDevice'));
+    expect(sheet, contains('removeDeviceConfirmation(device.name)'));
+    expect(sheet, contains('removePlaybackDevice(device.deviceId)'));
+    expect(sheet, contains('setState(_loadDevices)'));
+  });
 }

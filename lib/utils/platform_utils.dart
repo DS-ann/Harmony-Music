@@ -10,3 +10,5 @@ bool get isDesktopPlatform {
 }
 
 bool get isAndroidPlatform => defaultTargetPlatform == TargetPlatform.android;
+bool get isWindowsPlatform => defaultTargetPlatform == TargetPlatform.windows;
+bool get isPlaybackPreloadPlatform => isAndroidPlatform || isWindowsPlatform;

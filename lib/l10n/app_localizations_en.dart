@@ -1279,6 +1279,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get tapToLeaveSync => 'Synced — tap to leave';
 
   @override
+  String get removeDevice => 'Remove device';
+
+  @override
+  String removeDeviceConfirmation(String deviceName) {
+    return 'Remove $deviceName from your Harmony account? It will appear again if Harmony is opened on that device.';
+  }
+
+  @override
+  String get deviceRemoved => 'Device removed.';
+
+  @override
+  String get deviceRemovalFailed =>
+      'The device could not be removed. Try again later.';
+
+  @override
   String get debugRefreshAuthToken => 'Refresh Auth0 token';
 
   @override

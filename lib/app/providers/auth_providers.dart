@@ -138,6 +138,9 @@ class AuthController extends ChangeNotifier {
   Future<List<CloudPlaybackDevice>> playbackDevices() =>
       _cloud.playbackDevices();
 
+  Future<void> removePlaybackDevice(String deviceId) =>
+      _cloud.removePlaybackDevice(deviceId);
+
   Future<bool> handoffPlayback({
     required String targetDeviceId,
     required Map<String, Object?> payload,

@@ -138,6 +138,13 @@ class HarmonyCloudClient {
         .toList();
   }
 
+  Future<void> removePlaybackDevice(String deviceId) async {
+    await _dio.deleteUri<void>(
+      Uri.parse(baseUrl).resolve('v1/devices/${Uri.encodeComponent(deviceId)}'),
+      options: await _options(),
+    );
+  }
+
   Future<void> updatePlaybackPresence(String deviceId) async {
     await _dio.postUri<void>(
       Uri.parse(baseUrl).resolve('v1/playback/presence'),

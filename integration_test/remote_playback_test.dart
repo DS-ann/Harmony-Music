@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:harmonymusic/app/providers/controller_providers.dart';
+import 'package:harmonymusic/app/providers/service_providers.dart';
 import 'package:harmonymusic/domain/repositories/settings_repository.dart';
 import 'package:harmonymusic/services/cloud/cloud_playback_gateway.dart';
 import 'package:harmonymusic/services/cloud/cloud_playback_receiver.dart';
@@ -10,6 +12,9 @@ import 'package:harmonymusic/services/cloud/playback_socket_client.dart';
 import 'package:harmonymusic/services/metadata/playback_metadata_resolver.dart';
 import 'package:harmonymusic/services/playback_command_service.dart';
 import 'package:integration_test/integration_test.dart';
+
+import 'support/fakes.dart';
+import 'support/harness.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +27,7 @@ void main() {
   late PlaybackCommandService androidCommands;
   late PlaybackCommandService windowsCommands;
   late CloudPlaybackReceiver windowsReceiver;
+  late _FixtureMetadata windowsMetadata;
 
   setUp(() async {
     bridge = _PlaybackBridge();
@@ -47,9 +53,10 @@ void main() {
       settingsRepository: windowsSettings,
       cloudSync: bridge.gateway('windows'),
     );
+    windowsMetadata = _FixtureMetadata();
     windowsReceiver = CloudPlaybackReceiver(
       bridge.gateway('windows'),
-      _FixtureMetadata(),
+      windowsMetadata,
       windowsCommands,
       bridge.socket('windows'),
     );
@@ -159,6 +166,91 @@ void main() {
 
     expect(windowsAudio.skipToNextCallCount, 0);
     expect(windowsAudio.playedSongIds.last, _songs[1].id);
+  });
+
+  testWidgets(
+    'play next inserts after the remote current song and next plays it',
+    (_) async {
+      final initialQueue = [..._songs, _playNextQueueTail];
+      windowsMetadata.items = [...initialQueue, _playNextSong];
+
+      final sessionId = await androidCommands.startSharedSession(
+        targetDeviceId: 'windows',
+        queue: initialQueue,
+        index: 1,
+        positionMs: 0,
+        playing: true,
+      );
+      expect(sessionId, isNotNull);
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id == _songs[1].id &&
+            windowsAudio.queue.value.map((song) => song.id).join('|') ==
+                initialQueue.map((song) => song.id).join('|'),
+        reason: 'Windows should start from the middle of the shared queue',
+      );
+
+      await androidCommands.addPlayNextItem(_playNextSong);
+      final expectedQueue = [
+        _songs[0],
+        _songs[1],
+        _playNextSong,
+        _playNextQueueTail,
+      ];
+      await _waitUntil(
+        () =>
+            windowsAudio.queue.value.map((song) => song.id).join('|') ==
+            expectedQueue.map((song) => song.id).join('|'),
+        reason:
+            'Play next should insert directly after the remote current song',
+      );
+
+      await androidCommands.next(desiredVideoId: _playNextSong.id);
+      await _waitUntil(
+        () => windowsAudio.mediaItem.value?.id == _playNextSong.id,
+        reason: 'Next should use the queue just installed by Play next',
+      );
+    },
+  );
+
+  testWidgets('playlist second-song tap stays selected during remote shuffle', (
+    _,
+  ) async {
+    final playlist = _replacementScenarios[1].queue;
+    windowsMetadata.items = [..._songs, ...playlist];
+    androidSettings.shuffle = true;
+
+    await androidCommands.startSharedSession(
+      targetDeviceId: 'windows',
+      queue: _songs,
+      index: 0,
+      positionMs: 0,
+      playing: true,
+    );
+    await _waitUntil(
+      () => windowsAudio.mediaItem.value?.id == _songs.first.id,
+      reason: 'Windows should accept the initial handoff',
+    );
+
+    // This is the exact command sequence used by playPlayListSong when
+    // shuffle is enabled: install the tapped playlist, shuffle around the
+    // tapped index, then play the selected song now at queue index zero.
+    await androidCommands.updateQueue(playlist);
+    await androidCommands.shuffleFromIndex(1);
+    await androidCommands.playByIndex(0);
+    await _waitUntil(
+      () => windowsAudio.mediaItem.value?.id == playlist[1].id,
+      reason: 'tapping playlist item two must play item two when shuffle is on',
+    );
+
+    final handoff = bridge.commands.lastWhere(
+      (command) =>
+          command['sourceDeviceId'] == 'android' &&
+          command['commandType'] == 'handoff',
+    );
+    final payload = handoff['payload'] as Map<String, Object?>;
+    expect(payload['currentSongId'], playlist[1].id);
+    expect((payload['queueIds'] as List).first, playlist[1].id);
   });
 
   testWidgets('older handoffs without mode fields keep the target modes', (
@@ -288,6 +380,559 @@ void main() {
       );
     },
   );
+
+  for (final scenario in _replacementScenarios) {
+    testWidgets(
+      'phone Home selection replaces Windows with ${scenario.name} queue',
+      (tester) async {
+        windowsMetadata.items = [..._songs, ...scenario.queue];
+        final source = await bootTestApp(
+          tester,
+          musicService: _HomeSelectionMusicService({
+            scenario.queue.first.id: scenario.queue,
+          }),
+          playbackGateway: bridge.gateway('android'),
+        );
+        final sourceController = source.container.read(
+          playerControllerProvider,
+        );
+        final sourceCommands = source.container.read(
+          playbackCommandServiceProvider,
+        );
+
+        final sessionId = await sourceCommands.startSharedSession(
+          targetDeviceId: 'windows',
+          queue: _songs,
+          index: 0,
+          positionMs: 0,
+          playing: true,
+        );
+        expect(sessionId, isNotNull);
+        await _waitUntil(
+          () =>
+              windowsAudio.mediaItem.value?.id == _songs.first.id &&
+              windowsAudio.playbackState.value.processingState ==
+                  AudioProcessingState.ready,
+          reason: 'Windows should finish the initial phone handoff',
+        );
+
+        // This is the same controller path used after a Home-screen song tap:
+        // it resolves the selected song's watch queue, sends the remote queue
+        // update, and then hands the selected source to Windows.
+        windowsAudio.completeLoadsAutomatically = false;
+        await sourceController.pushSongToQueue(scenario.queue.first);
+        await _waitUntil(
+          () =>
+              windowsAudio.mediaItem.value?.id == scenario.queue.first.id &&
+              windowsAudio.playbackState.value.processingState ==
+                  AudioProcessingState.loading,
+          reason: 'Windows should immediately select the new Home song',
+        );
+        expect(windowsAudio.playbackState.value.updatePosition, Duration.zero);
+        expect(windowsAudio.queue.value.map((song) => song.id), [
+          scenario.queue.first.id,
+        ]);
+
+        windowsAudio.completePendingLoad();
+        await _waitUntil(
+          () =>
+              windowsAudio.playbackState.value.processingState ==
+                  AudioProcessingState.ready &&
+              windowsAudio.queue.value.map((song) => song.id).join('|') ==
+                  scenario.queue.map((song) => song.id).join('|'),
+          reason: 'Windows should widen to the selected Home song queue',
+        );
+        expect(
+          windowsAudio.queue.value.map((song) => song.id),
+          scenario.queue.map((song) => song.id),
+        );
+        expect(
+          windowsAudio.playedItems.last.extras?['url'],
+          scenario.queue.first.extras?['url'],
+          reason: 'Windows should receive the selected song source type',
+        );
+        expect(
+          windowsAudio.queue.value.map((song) => song.id),
+          isNot(contains(_songs.first.id)),
+        );
+
+        await _waitUntil(
+          () {
+            final state = bridge.sessionState;
+            return state?['currentSongId'] == scenario.queue.first.id &&
+                state?['queueIds'] is List &&
+                List<String>.from(state?['queueIds'] as List).join('|') ==
+                    scenario.queue.map((song) => song.id).join('|');
+          },
+          timeout: const Duration(seconds: 4),
+          reason: 'the durable session should replace the old queue too',
+        );
+
+        windowsAudio.completeLoadsAutomatically = true;
+        await sourceCommands.next(desiredVideoId: scenario.queue[1].id);
+        await _waitUntil(
+          () =>
+              windowsAudio.mediaItem.value?.id == scenario.queue[1].id &&
+              windowsAudio.playbackState.value.processingState ==
+                  AudioProcessingState.ready,
+          reason: 'Windows should advance through the replacement queue',
+        );
+        expect(
+          windowsAudio.playedItems.last.extras?['url'],
+          scenario.queue[1].extras?['url'],
+          reason: 'Windows should use the expected next-song source type',
+        );
+      },
+    );
+  }
+
+  testWidgets(
+    'phone local-only selections resolve to Windows network sources',
+    (tester) async {
+      windowsMetadata.items = [
+        ..._songs,
+        ..._windowsOnlineFirstSelection,
+        ..._windowsOnlineSecondSelection,
+      ];
+      final source = await bootTestApp(
+        tester,
+        musicService: _HomeSelectionMusicService({
+          _phoneLocalFirstSelection.first.id: _phoneLocalFirstSelection,
+          _phoneLocalSecondSelection.first.id: _phoneLocalSecondSelection,
+        }),
+        playbackGateway: bridge.gateway('android'),
+      );
+      final sourceController = source.container.read(playerControllerProvider);
+      final sourceCommands = source.container.read(
+        playbackCommandServiceProvider,
+      );
+
+      await sourceCommands.startSharedSession(
+        targetDeviceId: 'windows',
+        queue: _songs,
+        index: 0,
+        positionMs: 0,
+        playing: true,
+      );
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id == _songs.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.ready,
+        reason: 'Windows should be ready for Android remote selections',
+      );
+
+      // Both source items are local files on Android. The handoff messages
+      // contain their shared ids only, so Windows must resolve its own sources.
+      await sourceController.pushSongToQueue(_phoneLocalFirstSelection.first);
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id ==
+                _windowsOnlineFirstSelection.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.ready,
+        reason: 'Windows should play the first phone-selected song',
+      );
+      expect(
+        windowsAudio.playedItems.last.extras?['url'],
+        _windowsOnlineFirstSelection.first.extras?['url'],
+      );
+      expect(
+        windowsAudio.playedItems.last.extras?['url'],
+        isNot(startsWith('file://')),
+      );
+      expect(
+        windowsAudio.queue.value.map((item) => item.id),
+        _windowsOnlineFirstSelection.map((item) => item.id),
+      );
+
+      final firstSelectionMessage = bridge.commands.lastWhere(
+        (message) =>
+            message['sourceDeviceId'] == 'android' &&
+            message['commandType'] == 'handoff',
+      );
+      final firstSelectionPayload =
+          firstSelectionMessage['payload'] as Map<String, Object?>;
+      expect(
+        firstSelectionPayload['queueIds'],
+        _phoneLocalFirstSelection.map((item) => item.id),
+        reason: 'Android should send shared queue ids, not its file paths',
+      );
+
+      await sourceController.pushSongToQueue(_phoneLocalSecondSelection.first);
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id ==
+                _windowsOnlineSecondSelection.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.ready,
+        reason: 'Windows should replace playback after the second phone tap',
+      );
+      expect(
+        windowsAudio.playedItems.last.extras?['url'],
+        _windowsOnlineSecondSelection.first.extras?['url'],
+      );
+      expect(
+        windowsAudio.playedItems.last.extras?['url'],
+        isNot(startsWith('file://')),
+      );
+      expect(
+        windowsAudio.queue.value.map((item) => item.id),
+        _windowsOnlineSecondSelection.map((item) => item.id),
+      );
+      await _waitUntil(
+        () =>
+            bridge.sessionState?['queueIds'] is List &&
+            List<String>.from(
+                  bridge.sessionState?['queueIds'] as List,
+                ).join('|') ==
+                _windowsOnlineSecondSelection.map((item) => item.id).join('|'),
+        timeout: const Duration(seconds: 4),
+        reason: 'the second phone tap should persist the Windows queue',
+      );
+    },
+  );
+
+  testWidgets(
+    'Windows starts after a delayed online source for a phone-local selection',
+    (tester) async {
+      windowsMetadata.items = [..._songs, ..._windowsOnlineFirstSelection];
+      final source = await bootTestApp(
+        tester,
+        musicService: _HomeSelectionMusicService({
+          _phoneLocalFirstSelection.first.id: _phoneLocalFirstSelection,
+        }),
+        playbackGateway: bridge.gateway('android'),
+      );
+      final controller = source.container.read(playerControllerProvider);
+      final commands = source.container.read(playbackCommandServiceProvider);
+      await commands.startSharedSession(
+        targetDeviceId: 'windows',
+        queue: _songs,
+        index: 0,
+        positionMs: 0,
+        playing: true,
+      );
+      await _waitUntil(
+        () =>
+            windowsAudio.playbackState.value.processingState ==
+            AudioProcessingState.ready,
+        reason: 'Windows should accept the initial handoff',
+      );
+
+      windowsAudio.completeLoadsAutomatically = false;
+      await controller.pushSongToQueue(_phoneLocalFirstSelection.first);
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id ==
+                _windowsOnlineFirstSelection.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.loading,
+        reason: 'Windows should show the phone-selected online song as loading',
+      );
+      expect(windowsAudio.playbackState.value.updatePosition, Duration.zero);
+      expect(
+        windowsAudio.playedItems.last.extras?['url'],
+        _windowsOnlineFirstSelection.first.extras?['url'],
+        reason: 'Windows must use its own network source while loading',
+      );
+
+      windowsAudio.completePendingLoad();
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id ==
+                _windowsOnlineFirstSelection.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.ready,
+        reason: 'the delayed Windows source should start without another tap',
+      );
+    },
+  );
+
+  testWidgets('duplicate in-flight handoffs join one Windows start', (_) async {
+    windowsAudio.completeLoadsAutomatically = false;
+    final payload = {
+      'queueIds': _songs.map((song) => song.id).toList(),
+      'index': 0,
+      'currentSongId': _songs.first.id,
+      'positionMs': 0,
+      'playing': true,
+    };
+
+    await bridge
+        .gateway('android')
+        .sendSessionCommand(
+          targetDeviceId: 'windows',
+          type: 'handoff',
+          payload: payload,
+        );
+    await _waitUntil(
+      () =>
+          windowsAudio.mediaItem.value?.id == _songs.first.id &&
+          windowsAudio.playbackState.value.processingState ==
+              AudioProcessingState.loading,
+      reason: 'the first handoff should start loading',
+    );
+
+    await bridge
+        .gateway('android')
+        .sendSessionCommand(
+          targetDeviceId: 'windows',
+          type: 'handoff',
+          payload: payload,
+        );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(
+      windowsAudio.playedSongIds,
+      [_songs.first.id],
+      reason: 'a duplicate handoff must join the first load, not restart it',
+    );
+
+    windowsAudio.completePendingLoad();
+    await _waitUntil(
+      () =>
+          windowsAudio.playbackState.value.processingState ==
+          AudioProcessingState.ready,
+      reason: 'the original start should complete normally',
+    );
+  });
+
+  testWidgets(
+    'a newer Android tap supersedes a stalled Windows online source',
+    (tester) async {
+      addTearDown(windowsAudio.completePendingLoad);
+      windowsMetadata.items = [
+        ..._songs,
+        ..._windowsOnlineFirstSelection,
+        ..._windowsOnlineSecondSelection,
+      ];
+      final source = await bootTestApp(
+        tester,
+        musicService: _HomeSelectionMusicService({
+          _phoneLocalFirstSelection.first.id: _phoneLocalFirstSelection,
+          _phoneLocalSecondSelection.first.id: _phoneLocalSecondSelection,
+        }),
+        playbackGateway: bridge.gateway('android'),
+      );
+      final controller = source.container.read(playerControllerProvider);
+      final commands = source.container.read(playbackCommandServiceProvider);
+      await commands.startSharedSession(
+        targetDeviceId: 'windows',
+        queue: _songs,
+        index: 0,
+        positionMs: 0,
+        playing: true,
+      );
+      await _waitUntil(
+        () =>
+            windowsAudio.playbackState.value.processingState ==
+            AudioProcessingState.ready,
+        reason: 'Windows should accept the initial handoff',
+      );
+
+      windowsAudio.completeLoadsAutomatically = false;
+      await controller.pushSongToQueue(_phoneLocalFirstSelection.first);
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id ==
+                _windowsOnlineFirstSelection.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.loading,
+        reason: 'the first online source should be visibly stalled',
+      );
+
+      // This is a second real Android controller action. Its queue-update and
+      // handoff messages must supersede the unresolved first Windows load.
+      await controller.pushSongToQueue(_phoneLocalSecondSelection.first);
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id ==
+                _windowsOnlineSecondSelection.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.loading,
+        reason: 'Windows should replace the stalled source with the newer tap',
+      );
+      expect(
+        windowsAudio.playedItems.last.extras?['url'],
+        _windowsOnlineSecondSelection.first.extras?['url'],
+      );
+
+      windowsAudio.completePendingLoad();
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id ==
+                _windowsOnlineSecondSelection.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.ready,
+        reason: 'the latest selection should start after its source settles',
+      );
+    },
+  );
+
+  testWidgets(
+    'late search queue lookup cannot replace a newer Recently Played tap',
+    (tester) async {
+      windowsMetadata.items = [
+        ..._songs,
+        ..._windowsOnlineFirstSelection,
+        ..._windowsOnlineSecondSelection,
+      ];
+      final musicService = _DelayedHomeSelectionMusicService({
+        _phoneLocalFirstSelection.first.id: _phoneLocalFirstSelection,
+        _phoneLocalSecondSelection.first.id: _phoneLocalSecondSelection,
+      })..hold(_phoneLocalFirstSelection.first.id);
+      final source = await bootTestApp(
+        tester,
+        musicService: musicService,
+        playbackGateway: bridge.gateway('android'),
+      );
+      final controller = source.container.read(playerControllerProvider);
+      final commands = source.container.read(playbackCommandServiceProvider);
+      await commands.startSharedSession(
+        targetDeviceId: 'windows',
+        queue: _songs,
+        index: 0,
+        positionMs: 0,
+        playing: true,
+      );
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id == _songs.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.ready,
+        reason: 'Windows should accept the initial handoff',
+      );
+
+      // Reproduce the real ordering: the searched song starts expanding its
+      // watch queue, then the user opens Recently Played and taps another
+      // online song before that first request returns.
+      final olderSelection = controller.pushSongToQueue(
+        _phoneLocalFirstSelection.first,
+      );
+      await musicService.waitUntilRequested(_phoneLocalFirstSelection.first.id);
+      await controller.pushSongToQueue(_phoneLocalSecondSelection.first);
+      await _waitUntil(
+        () =>
+            windowsAudio.mediaItem.value?.id ==
+                _windowsOnlineSecondSelection.first.id &&
+            windowsAudio.playbackState.value.processingState ==
+                AudioProcessingState.ready,
+        reason: 'the Recently Played tap should reach Windows first',
+      );
+
+      musicService.release(_phoneLocalFirstSelection.first.id);
+      await olderSelection;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      expect(
+        windowsAudio.mediaItem.value?.id,
+        _windowsOnlineSecondSelection.first.id,
+        reason:
+            'the late search lookup belongs to an older tap and must be ignored',
+      );
+      expect(
+        windowsAudio.queue.value.map((item) => item.id),
+        _windowsOnlineSecondSelection.map((item) => item.id),
+      );
+      expect(
+        bridge.commands
+            .where(
+              (message) =>
+                  message['sourceDeviceId'] == 'android' &&
+                  message['commandType'] == 'handoff',
+            )
+            .map(
+              (message) =>
+                  (message['payload'] as Map<String, Object?>)['currentSongId'],
+            )
+            .where((id) => id == _phoneLocalFirstSelection.first.id),
+        isEmpty,
+        reason: 'the obsolete searched-song intent must never be sent',
+      );
+    },
+  );
+
+  testWidgets('late older queue update cannot replace a newer Windows handoff', (
+    _,
+  ) async {
+    final olderQueue = _replacementScenarios[0].queue;
+    final newerQueue = _replacementScenarios[1].queue;
+    windowsMetadata.items = [..._songs, ...olderQueue, ...newerQueue];
+    final gateway = bridge.gateway('android');
+
+    Map<String, Object?> stateFor(List<MediaItem> queue) => {
+      'queueIds': queue.map((song) => song.id).toList(),
+      'index': 0,
+      'currentSongId': queue.first.id,
+      'positionMs': 0,
+      'playing': true,
+    };
+
+    // The real failure happened after Windows was already the active target.
+    // A queueUpdate delivered to a disengaged device is intentionally ignored.
+    await gateway.sendSessionCommand(
+      targetDeviceId: 'windows',
+      type: 'handoff',
+      payload: stateFor(_songs),
+    );
+    await _waitUntil(
+      () =>
+          windowsAudio.mediaItem.value?.id == _songs.first.id &&
+          windowsAudio.playbackState.value.processingState ==
+              AudioProcessingState.ready,
+      reason: 'Windows should first become the active audio target',
+    );
+
+    windowsMetadata.holdBatchContaining(olderQueue.first.id);
+    // This reproduces the live ordering: queueUpdate and handoff are delivered
+    // independently, and resolving the older/larger queue takes longer.
+    await gateway.sendSessionCommand(
+      targetDeviceId: 'windows',
+      type: 'queueUpdate',
+      payload: stateFor(olderQueue),
+    );
+    await gateway.sendSessionCommand(
+      targetDeviceId: 'windows',
+      type: 'handoff',
+      payload: stateFor(olderQueue),
+    );
+    await _waitUntil(
+      () => windowsAudio.mediaItem.value?.id == olderQueue.first.id,
+      reason: 'the older handoff should begin before its queue resolves',
+    );
+
+    await gateway.sendSessionCommand(
+      targetDeviceId: 'windows',
+      type: 'queueUpdate',
+      payload: stateFor(newerQueue),
+    );
+    await gateway.sendSessionCommand(
+      targetDeviceId: 'windows',
+      type: 'handoff',
+      payload: stateFor(newerQueue),
+    );
+    await _waitUntil(
+      () =>
+          windowsAudio.mediaItem.value?.id == newerQueue.first.id &&
+          windowsAudio.queue.value.map((song) => song.id).join('|') ==
+              newerQueue.map((song) => song.id).join('|'),
+      reason: 'the newer handoff should install its complete queue',
+    );
+
+    windowsMetadata.releaseBatchContaining(olderQueue.first.id);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    expect(
+      windowsAudio.mediaItem.value?.id,
+      newerQueue.first.id,
+      reason: 'late work from the older command must not change the song',
+    );
+    expect(
+      windowsAudio.queue.value.map((song) => song.id),
+      newerQueue.map((song) => song.id),
+      reason: 'late work from the older command must not replace the queue',
+    );
+  });
 }
 
 const _songs = [
@@ -305,6 +950,20 @@ const _songs = [
   ),
 ];
 
+const _playNextQueueTail = MediaItem(
+  id: 'ccccccccccc',
+  title: 'Remote Queue Tail',
+  artist: 'Fixture Artist',
+  duration: Duration(minutes: 5),
+);
+
+const _playNextSong = MediaItem(
+  id: 'ddddddddddd',
+  title: 'Requested Play Next Song',
+  artist: 'Fixture Artist',
+  duration: Duration(minutes: 6),
+);
+
 Future<void> _waitUntil(
   bool Function() condition, {
   Duration timeout = const Duration(seconds: 3),
@@ -318,9 +977,23 @@ Future<void> _waitUntil(
 }
 
 class _FixtureMetadata implements PlaybackMetadataResolver {
+  _FixtureMetadata([List<MediaItem>? items]) : items = items ?? _songs;
+
+  List<MediaItem> items;
+  final Map<String, Completer<void>> _batchHolds = {};
+
+  void holdBatchContaining(String videoId) {
+    _batchHolds[videoId] = Completer<void>();
+  }
+
+  void releaseBatchContaining(String videoId) {
+    final hold = _batchHolds.remove(videoId);
+    if (hold != null && !hold.isCompleted) hold.complete();
+  }
+
   @override
   Future<MediaItem?> resolve(String videoId) async {
-    for (final song in _songs) {
+    for (final song in items) {
       if (song.id == videoId) return song;
     }
     return null;
@@ -328,8 +1001,11 @@ class _FixtureMetadata implements PlaybackMetadataResolver {
 
   @override
   Future<Map<String, MediaItem>> resolveBatch(List<String> videoIds) async {
+    for (final entry in _batchHolds.entries.toList()) {
+      if (videoIds.contains(entry.key)) await entry.value.future;
+    }
     return {
-      for (final song in _songs)
+      for (final song in items)
         if (videoIds.contains(song.id)) song.id: song,
     };
   }
@@ -338,6 +1014,7 @@ class _FixtureMetadata implements PlaybackMetadataResolver {
 class _PlaybackBridge {
   final Map<String, _BridgeSocket> _sockets = {};
   final List<Map<String, dynamic>> progressFrames = [];
+  final List<Map<String, Object?>> commands = [];
   Map<String, dynamic>? sessionState;
   String? targetDeviceId;
   var _commandSequence = 0;
@@ -362,6 +1039,12 @@ class _PlaybackBridge {
     String type,
     Map<String, Object?> payload,
   ) {
+    commands.add({
+      'sourceDeviceId': sourceDeviceId,
+      'targetDeviceId': targetDeviceId,
+      'commandType': type,
+      'payload': Map<String, Object?>.from(payload),
+    });
     _sockets[targetDeviceId]?.addFrame({
       'type': 'command',
       'commandId': 'command-${++_commandSequence}',
@@ -525,6 +1208,7 @@ class _RemoteAudioHandler extends BaseAudioHandler {
   int pauseCallCount = 0;
   int skipToNextCallCount = 0;
   final List<String> playedSongIds = [];
+  final List<MediaItem> playedItems = [];
   Completer<void>? _pendingLoad;
 
   @override
@@ -547,6 +1231,7 @@ class _RemoteAudioHandler extends BaseAudioHandler {
       if (index < 0 || index >= queue.value.length) return null;
       final song = queue.value[index];
       playedSongIds.add(song.id);
+      playedItems.add(song);
       mediaItem.add(song);
       playbackState.add(
         playbackState.value.copyWith(
@@ -640,6 +1325,134 @@ class _RemoteAudioHandler extends BaseAudioHandler {
     await customAction('playByIndex', {'index': currentIndex + 1});
   }
 }
+
+class _HomeSelectionMusicService extends FakeMusicService {
+  _HomeSelectionMusicService(this._watchQueues);
+
+  final Map<String, List<MediaItem>> _watchQueues;
+
+  @override
+  Future<Map<String, dynamic>> getWatchPlaylist({
+    String videoId = '',
+    String? playlistId,
+    int limit = 25,
+    bool radio = false,
+    bool shuffle = false,
+    String? additionalParamsNext,
+    bool onlyRelated = false,
+  }) async {
+    final queue = _watchQueues[videoId];
+    if (queue != null) {
+      return {'tracks': queue, 'additionalParamsForNext': null};
+    }
+    return super.getWatchPlaylist(
+      videoId: videoId,
+      playlistId: playlistId,
+      limit: limit,
+      radio: radio,
+      shuffle: shuffle,
+      additionalParamsNext: additionalParamsNext,
+      onlyRelated: onlyRelated,
+    );
+  }
+}
+
+class _DelayedHomeSelectionMusicService extends _HomeSelectionMusicService {
+  _DelayedHomeSelectionMusicService(super.watchQueues);
+
+  final Map<String, Completer<void>> _holds = {};
+  final Map<String, Completer<void>> _requests = {};
+
+  void hold(String videoId) {
+    _holds.putIfAbsent(videoId, Completer<void>.new);
+  }
+
+  Future<void> waitUntilRequested(String videoId) =>
+      _requests.putIfAbsent(videoId, Completer<void>.new).future;
+
+  void release(String videoId) {
+    final hold = _holds[videoId];
+    if (hold != null && !hold.isCompleted) hold.complete();
+  }
+
+  @override
+  Future<Map<String, dynamic>> getWatchPlaylist({
+    String videoId = '',
+    String? playlistId,
+    int limit = 25,
+    bool radio = false,
+    bool shuffle = false,
+    String? additionalParamsNext,
+    bool onlyRelated = false,
+  }) async {
+    final requested = _requests.putIfAbsent(videoId, Completer<void>.new);
+    if (!requested.isCompleted) requested.complete();
+    final hold = _holds[videoId];
+    if (hold != null) await hold.future;
+    return super.getWatchPlaylist(
+      videoId: videoId,
+      playlistId: playlistId,
+      limit: limit,
+      radio: radio,
+      shuffle: shuffle,
+      additionalParamsNext: additionalParamsNext,
+      onlyRelated: onlyRelated,
+    );
+  }
+}
+
+class _ReplacementScenario {
+  const _ReplacementScenario(this.name, this.queue);
+
+  final String name;
+  final List<MediaItem> queue;
+}
+
+MediaItem _replacementSong(String id, String source) => MediaItem(
+  id: id,
+  title: 'Replacement $id',
+  artist: 'Fixture Artist',
+  duration: const Duration(minutes: 3),
+  extras: {'url': source, 'isLive': false},
+);
+
+final _replacementScenarios = [
+  _ReplacementScenario('offline', [
+    _replacementSong('offline0001', 'file:///C:/Music/offline0001.mp3'),
+    _replacementSong('offline0002', 'file:///C:/Music/offline0002.mp3'),
+    _replacementSong('offline0003', 'file:///C:/Music/offline0003.mp3'),
+  ]),
+  _ReplacementScenario('online', [
+    _replacementSong('online00001', 'https://example.test/online00001.m4a'),
+    _replacementSong('online00002', 'https://example.test/online00002.m4a'),
+    _replacementSong('online00003', 'https://example.test/online00003.m4a'),
+  ]),
+  _ReplacementScenario('mixed', [
+    _replacementSong('mixed000001', 'file:///C:/Music/mixed000001.mp3'),
+    _replacementSong('mixed000002', 'https://example.test/mixed000002.m4a'),
+    _replacementSong('mixed000003', 'file:///C:/Music/mixed000003.mp3'),
+  ]),
+];
+
+final _phoneLocalFirstSelection = [
+  _replacementSong('phoneLoc001', 'file:///storage/emulated/0/Music/one.mp3'),
+  _replacementSong('phoneLoc002', 'file:///storage/emulated/0/Music/two.mp3'),
+];
+
+final _phoneLocalSecondSelection = [
+  _replacementSong('phoneLoc003', 'file:///storage/emulated/0/Music/three.mp3'),
+  _replacementSong('phoneLoc004', 'file:///storage/emulated/0/Music/four.mp3'),
+];
+
+final _windowsOnlineFirstSelection = [
+  _replacementSong('phoneLoc001', 'https://example.test/windows-one.m4a'),
+  _replacementSong('phoneLoc002', 'https://example.test/windows-two.m4a'),
+];
+
+final _windowsOnlineSecondSelection = [
+  _replacementSong('phoneLoc003', 'https://example.test/windows-three.m4a'),
+  _replacementSong('phoneLoc004', 'https://example.test/windows-four.m4a'),
+];
 
 class _MemorySettings implements SettingsRepository {
   _MemorySettings({

@@ -284,12 +284,12 @@ class HiveSettingsRepository implements SettingsRepository {
   @override
   int getPlaybackPreloadRange() {
     final value = _box.get(PrefKeys.playbackPreloadRange) ?? 0;
-    return value is int ? value.clamp(0, 3).toInt() : 0;
+    return value is int ? value.clamp(0, 5).toInt() : 0;
   }
 
   @override
   Future<void> setPlaybackPreloadRange(int value) =>
-      _box.put(PrefKeys.playbackPreloadRange, value.clamp(0, 3).toInt());
+      _box.put(PrefKeys.playbackPreloadRange, value.clamp(0, 5).toInt());
 
   @override
   int getPlayerUi() => _box.get(PrefKeys.playerUi) ?? 0;

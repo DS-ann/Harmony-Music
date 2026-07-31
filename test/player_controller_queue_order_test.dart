@@ -18,9 +18,7 @@ void main() {
       () {
         final block = _methodBlock(source, 'pushSongToQueue');
 
-        final queueUpdateIndex = block.indexOf(
-          'final queueUpdate = Future.delayed',
-        );
+        final queueUpdateIndex = block.indexOf('final queueUpdate = Future<');
         final backgroundUpdateIndex = block.indexOf('queueUpdate.then');
         final panelCheckIndex = block.indexOf(
           'unawaited(_playerPanelCheck());',
@@ -55,6 +53,25 @@ void main() {
       expect(awaitQueueUpdateIndex, isNot(-1));
       expect(playByIndexIndex, isNot(-1));
       expect(awaitQueueUpdateIndex, lessThan(playByIndexIndex));
+    });
+
+    test('standalone selection discards an older late queue lookup', () {
+      final block = _methodBlock(source, 'pushSongToQueue');
+
+      expect(
+        block,
+        contains('final selectionGeneration = ++_playNowSelectionGeneration;'),
+      );
+      expect(
+        block,
+        contains('selectionGeneration != _playNowSelectionGeneration'),
+      );
+      expect(
+        block.indexOf('selectionGeneration != _playNowSelectionGeneration'),
+        lessThan(block.indexOf('_playbackCommands.updateQueue(tracks)')),
+        reason:
+            'an obsolete lookup must be rejected before it changes or sends the queue',
+      );
     });
 
     test('playlist playback updates queue before playByIndex', () {

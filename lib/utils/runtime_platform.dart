@@ -13,4 +13,5 @@ class RuntimePlatform {
 
   static bool get isDesktop => isLinux || isMacOS || isWindows;
   static bool get isMobile => isAndroid || isIOS;
+  static bool get supportsPlaybackPreloading => isAndroid || isWindows;
 }

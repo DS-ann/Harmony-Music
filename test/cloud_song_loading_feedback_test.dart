@@ -438,6 +438,45 @@ void main() {
     expect(widen, contains('generation == _targetPlaybackGeneration'));
   });
 
+  test('stale queue-update resolution cannot overwrite a newer handoff', () {
+    final update = _methodBlock(receiver, '_applyQueueUpdate');
+
+    // Socket commands are dispatched concurrently. A large, older queueUpdate
+    // can therefore finish resolving after a newer handoff has already
+    // installed its queue. The queue update must participate in the same
+    // supersession generation as handoff widening before it mutates the player.
+    expect(update, contains('final generation = _targetPlaybackGeneration'));
+    expect(update, contains('final queueUpdateGeneration ='));
+    expect(update, contains('queueUpdateGeneration != _queueUpdateGeneration'));
+    expect(update, contains('generation != _targetPlaybackGeneration'));
+    expect(
+      update.lastIndexOf('generation != _targetPlaybackGeneration'),
+      greaterThan(update.indexOf('await _metadata.resolveBatch(queueIds)')),
+    );
+    expect(
+      update.lastIndexOf('generation != _targetPlaybackGeneration'),
+      lessThan(update.indexOf('await _local.updateQueue(items)')),
+    );
+  });
+
+  test('a rejected optimistic snapshot is not marked as applied', () {
+    final queue = _methodBlock(player, 'applyRemoteQueue');
+    final mirror = _methodBlock(receiver, '_mirrorQueue');
+
+    // applyRemoteQueue can reject a snapshot while an optimistic next/previous
+    // transition is pending. Recording its ids anyway makes every later
+    // snapshot look unchanged even though the visible queue was never replaced.
+    expect(queue, contains('bool applyRemoteQueue('));
+    expect(queue, contains('return false;'));
+    expect(queue, contains('return true;'));
+    expect(mirror, contains('final queueApplied = player.applyRemoteQueue('));
+    expect(mirror, contains('if (!queueApplied) return;'));
+    expect(
+      mirror.indexOf('_appliedQueueIds = List<String>.unmodifiable(queueIds)'),
+      greaterThan(mirror.indexOf('if (!queueApplied) return;')),
+    );
+  });
+
   test('handoff resumes from the controller position before playing', () {
     final start = _methodBlock(receiver, '_startPlayback');
     final load = _methodBlock(

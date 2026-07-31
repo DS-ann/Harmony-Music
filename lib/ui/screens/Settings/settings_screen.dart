@@ -784,7 +784,7 @@ class SettingsScreen extends ConsumerWidget {
                           onChanged: settingsController.setStreamingQuality,
                         ),
                       ),
-                      if (RuntimePlatform.isAndroid)
+                      if (RuntimePlatform.supportsPlaybackPreloading)
                         ListTile(
                           contentPadding: const EdgeInsets.only(
                             left: 5,
@@ -812,7 +812,7 @@ class SettingsScreen extends ConsumerWidget {
                             onChanged: settingsController.setPlaybackMode,
                           ),
                         ),
-                      if (RuntimePlatform.isAndroid)
+                      if (RuntimePlatform.supportsPlaybackPreloading)
                         settingsController.playbackMode.value ==
                                 PlaybackMode.preloaded
                             ? ListTile(
