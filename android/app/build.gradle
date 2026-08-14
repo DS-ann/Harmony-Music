@@ -63,7 +63,7 @@ android {
 
     defaultConfig {
         applicationId "com.anandnet.harmonymusic"
-        minSdkVersion flutter.minSdkVersion
+        minSdkVersion 23
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
@@ -87,7 +87,16 @@ android {
     }
 
     signingConfigs {
+        debug {
+            applicationIdSuffix ".dev"
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
+
         release {
+            applicationIdSuffix ".prod"
+            v1SigningEnabled true
+            v2SigningEnabled true
             if (hasReleaseSigning) {
                 storeFile file(releaseKeystorePath)
                 storePassword releaseKeystorePassword
