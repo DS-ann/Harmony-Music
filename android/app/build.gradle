@@ -58,7 +58,7 @@ android {
 
     defaultConfig {
         applicationId "com.anandnet.harmonymusic"
-        minSdkVersion flutter.minSdkVersion
+        minSdkVersion 23
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
