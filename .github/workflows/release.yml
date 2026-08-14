@@ -28,6 +28,11 @@ jobs:
       - name: Create Update Check Flag
         run: echo 'const updateCheckFlag = true;' > lib/utils/update_check_flag_file.dart
 
+      - name: Create Dummy .env File
+        run: |
+          echo "AUTH0_DOMAIN=auth0.invalid" > .env
+          echo "AUTH0_REDIRECT_SCHEME=harmonymusic" >> .env
+
       - name: Run flutter pub get
         run: flutter pub get
 
