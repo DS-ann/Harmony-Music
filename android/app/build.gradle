@@ -40,8 +40,8 @@ def hasReleaseSigning = [
 
 android {
     compileSdkVersion flutter.compileSdkVersion
-    // Using NDK 26 ensures compatibility with Android 6 (API 23)
-    ndkVersion = "26.1.10909125"
+    // Required matching version for plugins
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -88,13 +88,11 @@ android {
 
     signingConfigs {
         debug {
-            applicationIdSuffix ".dev"
             v1SigningEnabled true
             v2SigningEnabled true
         }
 
         release {
-            applicationIdSuffix ".prod"
             v1SigningEnabled true
             v2SigningEnabled true
             if (hasReleaseSigning) {
@@ -109,27 +107,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix ".dev"
-        }
-
-        profile {
-            applicationIdSuffix ".profile"
             signingConfig signingConfigs.debug
-        }
-
-        release {
-            applicationIdSuffix ".prod"
-            // Safely assign the signing config here in buildTypes instead
-            if (hasReleaseSigning) {
-                signingConfig signingConfigs.release
-            } else {
-                signingConfig signingConfigs.debug
-            }
-        }
-    }
-
-    buildTypes {
-        debug {
-            applicationIdSuffix ".dev"
         }
 
         profile {
@@ -142,6 +120,7 @@ android {
             signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
         }
     }
+    
     namespace 'com.anandnet.harmonymusic'
 }
 
