@@ -1,5 +1,6 @@
 plugins {
     id "com.android.application"
+    id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
 }
 
@@ -39,13 +40,17 @@ def hasReleaseSigning = [
 
 android {
     compileSdkVersion flutter.compileSdkVersion
-    ndkVersion = "28.2.13676358"
+    // Using NDK 26 ensures compatibility with Android 6 (API 23)
+    ndkVersion = "26.1.10909125"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-        // Required for Java 17 compatibility on Android 6 (API 23)
         coreLibraryDesugaringEnabled true
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
     }
 
     buildFeatures {
@@ -58,12 +63,12 @@ android {
 
     defaultConfig {
         applicationId "com.anandnet.harmonymusic"
-        minSdkVersion 23
+        minSdkVersion flutter.minSdkVersion
         targetSdkVersion flutter.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         
-        // Enable MultiDex for Android 6 compatibility
+        // MultiDex required for Android 6 apps with many dependencies
         multiDexEnabled true
 
         def auth0Domain = "auth0.invalid"
@@ -89,8 +94,7 @@ android {
                 keyAlias releaseKeyAlias
                 keyPassword releaseKeyPassword
             } else {
-                // Fallback to debug signing config so it builds successfully without a keystore
-                storeFile file('debug.keystore')
+                signingConfig signingConfigs.debug
             }
         }
     }
@@ -107,7 +111,6 @@ android {
 
         release {
             applicationIdSuffix ".prod"
-            // Automatically use custom release signing if available, otherwise fallback safely
             signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
         }
     }
@@ -118,18 +121,11 @@ flutter {
     source '../..'
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
-    }
-}
-
 dependencies {
-    // Required core library desugaring for older Android versions (Android 6)
+    // Required for Java 17 features on Android 6
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
     
     implementation 'com.android.support:multidex:2.0.1'
     implementation 'androidx.core:core-splashscreen:1.0.0-beta02'
     implementation 'com.google.android.gms:play-services-nearby:19.3.0'
-    testImplementation 'junit:junit:4.13.2'
 }
