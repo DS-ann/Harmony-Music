@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
         xmlns:tools="http://schemas.android.com/tools">
-        <uses-sdk tools:overrideLibrary="auth0_flutter, firebase_core, firebase_messaging" />
+        <uses-sdk android:minSdkVersion="23" 
+        tools:overrideLibrary="auth0_flutter, firebase_core, firebase_messaging, jni, just_audio, audio_service, audio_session, app_links" />
    <application
         android:label="Harmony Music"
         android:name="${applicationName}"
