@@ -1,290 +1,41 @@
-name: Release
+name: Build Android APK
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [ main, master ]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
-concurrency:
-  group: harmony-release-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  metadata:
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      channel: ${{ steps.meta.outputs.channel }}
-      version: ${{ steps.meta.outputs.version }}
-      asset_suffix: ${{ steps.meta.outputs.asset_suffix }}
+
     steps:
-      - uses: actions/checkout@v4
-      - id: meta
-        shell: bash
-        run: |
-          version="$(awk '/^version:/ {print $2}' pubspec.yaml)"
-          semantic="${version%%+*}"
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            [[ "${GITHUB_REF_NAME#v}" == "${semantic}" ]] || exit 1
-            echo "channel=stable" >> "$GITHUB_OUTPUT"
-            echo "version=${version}" >> "$GITHUB_OUTPUT"
-            echo "asset_suffix=${semantic}-release" >> "$GITHUB_OUTPUT"
-          else
-            echo "channel=rolling" >> "$GITHUB_OUTPUT"
-            echo "version=${version}-main.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-            echo "asset_suffix=main-latest" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  android:
-    needs: metadata
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, flutter-version: 3.44.1, cache: true }
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '17' }
-      - name: Configure public Auth0 client settings
-        env:
-          AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
-          AUTH0_CLIENT_ID: ${{ secrets.AUTH0_CLIENT_ID }}
-          AUTH0_REDIRECT_SCHEME: ${{ secrets.AUTH0_REDIRECT_SCHEME }}
-          AUTH0_AUDIENCE: ${{ vars.AUTH0_AUDIENCE }}
-        run: |
-          test -n "$AUTH0_DOMAIN" -a -n "$AUTH0_CLIENT_ID" -a -n "$AUTH0_REDIRECT_SCHEME" -a -n "$AUTH0_AUDIENCE"
-          printf 'AUTH0_DOMAIN=%s\nAUTH0_CLIENT_ID=%s\nAUTH0_REDIRECT_SCHEME=%s\nAUTH0_AUDIENCE=%s\n' "$AUTH0_DOMAIN" "$AUTH0_CLIENT_ID" "$AUTH0_REDIRECT_SCHEME" "$AUTH0_AUDIENCE" > .env
-      - run: flutter pub get
-      - name: Configure Firebase Cloud Messaging
-        env:
-          FIREBASE_ANDROID_GOOGLE_SERVICES_JSON: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICES_JSON }}
-        run: |
-          test -n "$FIREBASE_ANDROID_GOOGLE_SERVICES_JSON"
-          echo "$FIREBASE_ANDROID_GOOGLE_SERVICES_JSON" > android/app/google-services.json
-      - run: echo 'const updateCheckFlag = true;' > lib/utils/update_check_flag_file.dart
-      - name: Build signed APK
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ISSUE_REPORT_ENDPOINT: ${{ secrets.ISSUE_REPORT_ENDPOINT }}
-          RESOLVER_PRODUCTION_BASE_URL: ${{ vars.RESOLVER_PRODUCTION_BASE_URL }}
-          # android/app/build.gradle gates release signing on this being set
-          # (hasReleaseSigning). It never was, so every CI "release" build fell
-          # back to signingConfigs.debug — and because runners are ephemeral,
-          # Gradle generated a brand new random ~/.android/debug.keystore each
-          # run. Consecutive CI builds therefore had different signatures and
-          # Android refused to install one over another ("App not installed").
-          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/app/keystore/release.jks
-        run: |
-          test -n "$ANDROID_KEYSTORE_BASE64" -a -n "$ANDROID_KEYSTORE_PASSWORD" -a -n "$ANDROID_KEY_ALIAS" -a -n "$ANDROID_KEY_PASSWORD" -a -n "$ISSUE_REPORT_ENDPOINT" -a -n "$RESOLVER_PRODUCTION_BASE_URL" -a -n "$ANDROID_KEYSTORE_PATH"
-          mkdir -p android/app/keystore
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/keystore/release.jks
-          # GITHUB_RUN_NUMBER is scoped to this workflow. The previous Android
-          # workflow reached 24 before release.yml started its counter, so use a
-          # new range that is above every APK produced by either workflow.
-          flutter build apk --release --build-number="$((2000000 + GITHUB_RUN_NUMBER))" --dart-define=ISSUE_REPORT_ENDPOINT="$ISSUE_REPORT_ENDPOINT" --dart-define=BUILD_CHANNEL="${{ needs.metadata.outputs.channel }}" --dart-define=BUILD_VERSION="${{ needs.metadata.outputs.version }}" --dart-define=BUILD_SHA="$GITHUB_SHA" --dart-define=RESOLVER_PRODUCTION_BASE_URL="$RESOLVER_PRODUCTION_BASE_URL"
-          cp build/app/outputs/flutter-apk/app-release.apk "harmonymusic-${{ needs.metadata.outputs.asset_suffix }}.apk"
-          # Pin every update-critical property to the already-published stable
-          # Android line. Merely checking for a non-debug certificate is not
-          # enough: any different release certificate also makes Android reject
-          # an in-place update.
-          apksigner="$(find "$ANDROID_SDK_ROOT/build-tools" -name apksigner -type f | sort -V | tail -1)"
-          aapt="$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt -type f | sort -V | tail -1)"
-          if [ -z "$apksigner" ] || [ -z "$aapt" ]; then
-            echo "::error::Android build tools needed for release verification were not found."
-            exit 1
-          fi
-
-          apk="harmonymusic-${{ needs.metadata.outputs.asset_suffix }}.apk"
-          "$apksigner" verify --print-certs "$apk" > signer-certs.txt
-          cat signer-certs.txt
-
-          expected_signer="b12ca7ee8a05a9e88e13714cfe8124b96112f0d8b56d19a62ef6233aa22e0793"
-          actual_signers="$(sed -n 's/^.*certificate SHA-256 digest: //p' signer-certs.txt)"
-          if [ "$actual_signers" != "$expected_signer" ]; then
-            echo "::error::APK signer does not match the certificate used by stable releases v6.0.0-v6.0.2."
-            exit 1
-          fi
-
-          "$aapt" dump badging "$apk" > apk-badging.txt
-          head -1 apk-badging.txt > apk-package.txt
-          cat apk-package.txt
-          expected_version_code="$((2000000 + GITHUB_RUN_NUMBER))"
-          if ! grep -Fq "package: name='com.anandnet.harmonymusic.prod'" apk-package.txt; then
-            echo "::error::APK package name changed, so it cannot update the existing production app."
-            exit 1
-          fi
-          if ! grep -Fq "versionCode='$expected_version_code'" apk-package.txt; then
-            echo "::error::APK version code is not the monotonically increasing CI build number."
-            exit 1
-          fi
-
-      - uses: actions/upload-artifact@v4
-        with: { name: android, path: harmonymusic-*.apk }
-
-  windows:
-    needs: metadata
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, flutter-version: 3.44.1, cache: true }
-      - name: Configure public Auth0 client settings
-        shell: pwsh
-        env:
-          AUTH0_DOMAIN: ${{ secrets.AUTH0_DOMAIN }}
-          AUTH0_CLIENT_ID: ${{ secrets.AUTH0_CLIENT_ID }}
-          AUTH0_REDIRECT_SCHEME: ${{ secrets.AUTH0_REDIRECT_SCHEME }}
-          AUTH0_AUDIENCE: ${{ vars.AUTH0_AUDIENCE }}
-        run: |
-          if (!$env:AUTH0_DOMAIN -or !$env:AUTH0_CLIENT_ID -or !$env:AUTH0_REDIRECT_SCHEME -or !$env:AUTH0_AUDIENCE) { throw 'Missing Auth0 configuration' }
-          @("AUTH0_DOMAIN=$env:AUTH0_DOMAIN", "AUTH0_CLIENT_ID=$env:AUTH0_CLIENT_ID", "AUTH0_REDIRECT_SCHEME=$env:AUTH0_REDIRECT_SCHEME", "AUTH0_AUDIENCE=$env:AUTH0_AUDIENCE") | Set-Content .env
-      - run: flutter pub get
-      - shell: pwsh
-        run: Set-Content lib/utils/update_check_flag_file.dart 'const updateCheckFlag = true;'
-      - name: Cache vcpkg toolchain and packages
-        uses: actions/cache@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
-          # The whole tree, not just 'installed'. Caching only the subdirectory
-          # meant a cache hit created C:\vcpkg-pinned *without* vcpkg.exe in it,
-          # and git clone refuses to clone into a non-empty directory — so every
-          # cache hit hard-failed the job. Caching the clone target itself keeps
-          # hit and miss symmetric: on a hit everything is present and the step
-          # below is a no-op, on a miss the directory does not exist at all.
-          path: C:\vcpkg-pinned
-          # Deliberately not hashFiles('windows/CMakeLists.txt'): that file
-          # changes for reasons that have nothing to do with which vcpkg ports
-          # are needed (it already busted this cache once, turning an unrelated
-          # one-line fix into another ~13-minute from-scratch vcpkg build). The
-          # pinned tag and port list are spelled out in the key itself — bump
-          # this key by hand if either one ever actually changes.
-          key: vcpkg-2026.06.01-x64-windows-cpprestsdk-openssl-boost-v2
-      - name: Install vcpkg dependencies for auth0_flutter
-        shell: pwsh
-        # windows-latest's preinstalled C:\vcpkg tracks vcpkg's current registry,
-        # which removed the cpprestsdk port entirely in release 2026.06.24 —
-        # confirmed via the GitHub API: ports/cpprestsdk exists at tag 2026.06.01,
-        # 404s at 2026.06.24. auth0_flutter's Windows CMakeLists.txt still needs
-        # it, so this clones that last-known-good tag instead of using the
-        # preinstalled copy. (This build has only ever run on a developer
-        # machine with an older vcpkg checkout already present locally — CI
-        # never installed anything, so 'flutter build windows' failed before
-        # ever reaching signing or packaging.)
-        run: |
-          if (!(Test-Path C:\vcpkg-pinned\vcpkg.exe)) {
-            git clone --depth 1 --branch 2026.06.01 https://github.com/microsoft/vcpkg.git C:\vcpkg-pinned
-            if ($LASTEXITCODE -ne 0) { throw "git clone vcpkg failed with exit code $LASTEXITCODE" }
-            & C:\vcpkg-pinned\bootstrap-vcpkg.bat -disableMetrics
-            if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed with exit code $LASTEXITCODE" }
-          }
-          # A no-op that exits 0 when the cache already provided these.
-          & C:\vcpkg-pinned\vcpkg.exe install cpprestsdk:x64-windows openssl:x64-windows boost-system:x64-windows boost-date-time:x64-windows boost-regex:x64-windows
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed with exit code $LASTEXITCODE" }
-      - name: Build and package installer
-        shell: pwsh
-        env:
-          KEY_PEM: ${{ secrets.KEY_PEM }}
-          ISSUE_REPORT_ENDPOINT: ${{ secrets.ISSUE_REPORT_ENDPOINT }}
-          RESOLVER_PRODUCTION_BASE_URL: ${{ vars.RESOLVER_PRODUCTION_BASE_URL }}
-          VCPKG_ROOT: C:\vcpkg-pinned
-          # The vendored firebase_cpp_sdk_windows (pulled in transitively for
-          # FCM) ships a CMakeLists.txt with cmake_minimum_required < 3.5, which
-          # CMake 4 refuses to configure at all rather than just warn about —
-          # this is CMake's own documented escape hatch for exactly that case,
-          # not something fixable from this repo since the file is extracted
-          # from a third-party archive at build time.
-          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
-        run: |
-          if (!$env:ISSUE_REPORT_ENDPOINT -or !$env:RESOLVER_PRODUCTION_BASE_URL) { throw 'Missing Windows release configuration' }
-          choco install innosetup -y --no-progress
-          flutter build windows --release --dart-define=ISSUE_REPORT_ENDPOINT="$env:ISSUE_REPORT_ENDPOINT" --dart-define=BUILD_CHANNEL="${{ needs.metadata.outputs.channel }}" --dart-define=BUILD_VERSION="${{ needs.metadata.outputs.version }}" --dart-define=BUILD_SHA="$env:GITHUB_SHA" --dart-define=RESOLVER_PRODUCTION_BASE_URL="$env:RESOLVER_PRODUCTION_BASE_URL"
-          # flutter build windows returning non-zero doesn't throw in PowerShell by
-          # default, so a build failure here used to be silently swallowed and only
-          # surfaced later as a confusing packaging error once iscc found no exe.
-          if ($LASTEXITCODE -ne 0) { throw "flutter build windows failed with exit code $LASTEXITCODE" }
-          $releaseDir = "$pwd\build\windows\x64\runner\Release"
-          # auth0_flutter links these vcpkg libraries dynamically. Inno Setup
-          # packages the release directory verbatim, so fail here instead of
-          # publishing an installer that crashes at launch with a missing DLL.
-          $requiredRuntimeDlls = @(
-            "cpprest_2_10.dll",
-            "libcrypto-3-x64.dll",
-            "libssl-3-x64.dll"
-          )
-          foreach ($dll in $requiredRuntimeDlls) {
-            if (!(Test-Path (Join-Path $releaseDir $dll))) {
-              throw "Windows release is missing required runtime dependency: $dll"
-            }
-          }
-          $app = Join-Path $releaseDir "harmonymusic.exe"
+          distribution: 'temurin'
+          java-version: '17'
 
-          # No KEY_PEM: ship unsigned rather than fail the release. win_cert/cert.pem
-          # is a self-signed leftover from the upstream project anyway — it was never
-          # trusted by Windows, so signing with it bought no real SmartScreen benefit
-          # over shipping unsigned. Revisit once a real CA-issued cert exists.
-          if ($env:KEY_PEM) {
-            Invoke-WebRequest https://github.com/mtrojnar/osslsigncode/releases/download/2.9/osslsigncode-2.9-windows-x64-mingw.zip -OutFile osslsigncode.zip
-            Expand-Archive osslsigncode.zip osslsigncode
-            [Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($env:KEY_PEM)) | Set-Content key.pem -NoNewline
-            $signer = "$pwd\osslsigncode\bin\osslsigncode.exe"
-            & $signer sign -certs "$pwd\win_cert\cert.pem" -key "$pwd\key.pem" -t http://timestamp.digicert.com -in $app -out "$app.signed"
-            Move-Item "$app.signed" $app -Force
-            & $signer verify -in $app -CAfile "$pwd\win_cert\cert.pem"
-          } else {
-            Write-Host "KEY_PEM not set — shipping an unsigned Windows build."
-          }
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+          cache: true
 
-          & iscc "/DAppVersion=${{ needs.metadata.outputs.version }}" "/DOutputBaseFilename=harmonymusic-${{ needs.metadata.outputs.asset_suffix }}" windows/packaging/exe/inno_setup.iss
-          $installer = Get-ChildItem windows/packaging/exe -Filter "harmonymusic-${{ needs.metadata.outputs.asset_suffix }}.exe" | Select-Object -First 1
+      - name: Create Update Check Flag
+        run: echo 'const updateCheckFlag = true;' > lib/utils/update_check_flag_file.dart
 
-          if ($env:KEY_PEM) {
-            $signer = "$pwd\osslsigncode\bin\osslsigncode.exe"
-            & $signer sign -certs "$pwd\win_cert\cert.pem" -key "$pwd\key.pem" -t http://timestamp.digicert.com -in $installer.FullName -out "$($installer.FullName).signed"
-            Move-Item "$($installer.FullName).signed" $installer.FullName -Force
-            & $signer verify -in $installer.FullName -CAfile "$pwd\win_cert\cert.pem"
-          }
-      - uses: actions/upload-artifact@v4
-        with: { name: windows, path: windows/packaging/exe/harmonymusic-*.exe }
+      - name: Run flutter pub get
+        run: flutter pub get
 
-  publish:
-    needs: [metadata, android, windows]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        # Deliberately not 'assets': the repo has its own top-level assets/
-        # directory (the Flutter app's icons), and since this job now checks
-        # the repo out, downloading into that path made 'assets/*' glob
-        # assets/icons/ too — which gh tried to upload as a release asset and
-        # died on ("read assets/icons: is a directory").
-        with: { path: release-assets, merge-multiple: true }
-      - name: Publish matching two-platform release
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: |
-          if [[ "${{ needs.metadata.outputs.channel }}" == stable ]]; then
-            gh release create "$GITHUB_REF_NAME" release-assets/* --title "Harmony Music $GITHUB_REF_NAME" --notes "Harmony Music production release $GITHUB_REF_NAME." --latest
-          else
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git tag -f main-latest "$GITHUB_SHA"
-            git push origin refs/tags/main-latest --force
-            # printf, not an inline "\n": inside double quotes bash leaves \n
-            # as a literal backslash-n, which is how the old release body ended
-            # up reading "candidate.\n\nBuild SHA:" on one line.
-            notes="$(printf 'Rolling Android and Windows candidate.\n\nBuild SHA: %s\nRun number: %s' "$GITHUB_SHA" "$GITHUB_RUN_NUMBER")"
-            # The release already exists after the first rolling build, so
-            # create always fails from then on. The old fallback only uploaded
-            # assets, leaving the title/notes frozen at whatever the very first
-            # run wrote — and the in-app rolling update check parses its "Build
-            # SHA:" out of those notes, so every later build published new
-            # binaries while still advertising the original commit. Devices on
-            # the rolling channel were told they were up to date indefinitely.
-            if ! gh release create main-latest release-assets/* --title 'Main latest candidate' --notes "$notes" --prerelease --target "$GITHUB_SHA"; then
-              gh release edit main-latest --title 'Main latest candidate' --notes "$notes" --prerelease --target "$GITHUB_SHA"
-              gh release upload main-latest release-assets/* --clobber
-            fi
-          fi
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: build/app/outputs/flutter-apk/app-release.apk
