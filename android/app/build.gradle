@@ -93,6 +93,25 @@ android {
                 storePassword releaseKeystorePassword
                 keyAlias releaseKeyAlias
                 keyPassword releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".dev"
+        }
+
+        profile {
+            applicationIdSuffix ".profile"
+            signingConfig signingConfigs.debug
+        }
+
+        release {
+            applicationIdSuffix ".prod"
+            // Safely assign the signing config here in buildTypes instead
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
             } else {
                 signingConfig signingConfigs.debug
             }
