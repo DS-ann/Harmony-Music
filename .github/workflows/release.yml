@@ -12,64 +12,117 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # -------------------------
+      # Checkout
+      # -------------------------
       - name: Checkout source
         uses: actions/checkout@v4
 
+      # -------------------------
+      # Java 17
+      # -------------------------
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
+      # -------------------------
+      # Flutter
+      # -------------------------
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.27.1"   # Change if needed
+          flutter-version: "3.35.2"
+          channel: stable
           cache: true
 
+      # -------------------------
+      # Show versions
+      # -------------------------
+      - name: Flutter version
+        run: |
+          flutter --version
+          dart --version
+
+      # -------------------------
+      # Get dependencies
+      # -------------------------
       - name: Flutter Pub Get
         run: flutter pub get
 
+      # -------------------------
+      # Build Universal APK
+      # -------------------------
       - name: Build Universal APK
         run: flutter build apk --release
 
+      # -------------------------
+      # Rename Universal APK
+      # -------------------------
       - name: Rename Universal APK
         run: |
           cp build/app/outputs/flutter-apk/app-release.apk \
              build/app/outputs/flutter-apk/app-universal-release.apk
 
+      # -------------------------
+      # Build ARM APKs
+      # -------------------------
       - name: Build Split APKs
         run: flutter build apk --release --split-per-abi
 
+      # -------------------------
+      # Create ZIP
+      # -------------------------
       - name: Create ZIP Package
         run: |
-          mkdir apk-package
+          mkdir -p apk-package
 
-          cp build/app/outputs/flutter-apk/app-universal-release.apk apk-package/
-          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk apk-package/
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk apk-package/
+          cp build/app/outputs/flutter-apk/app-universal-release.apk \
+             apk-package/
+
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+             apk-package/
+
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+             apk-package/
 
           cd apk-package
-          zip -r HarmonyMusic-APKs.zip .
+          zip -r HarmonyMusic-APKs.zip \
+            app-universal-release.apk \
+            app-armeabi-v7a-release.apk \
+            app-arm64-v8a-release.apk
 
+      # -------------------------
+      # Upload Universal
+      # -------------------------
       - name: Upload Universal APK
         uses: actions/upload-artifact@v4
         with:
           name: Universal-APK
           path: build/app/outputs/flutter-apk/app-universal-release.apk
 
+      # -------------------------
+      # Upload ARMv7
+      # -------------------------
       - name: Upload ARMv7 APK
         uses: actions/upload-artifact@v4
         with:
           name: ARMv7-APK
           path: build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
 
+      # -------------------------
+      # Upload ARM64
+      # -------------------------
       - name: Upload ARM64 APK
         uses: actions/upload-artifact@v4
         with:
           name: ARM64-APK
           path: build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 
+      # -------------------------
+      # Upload ZIP
+      # -------------------------
       - name: Upload ZIP
         uses: actions/upload-artifact@v4
         with:
