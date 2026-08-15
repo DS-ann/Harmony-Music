@@ -4,11 +4,6 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
-def hasGoogleServicesJson = file('google-services.json').exists()
-if (hasGoogleServicesJson) {
-    apply plugin: 'com.google.gms.google-services'
-}
-
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -27,26 +22,15 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
-def releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
-def releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-def releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
-def releaseKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
-def hasReleaseSigning = [
-        releaseKeystorePath,
-        releaseKeystorePassword,
-        releaseKeyAlias,
-        releaseKeyPassword,
-].every { value -> value != null && !value.trim().isEmpty() }
-
 android {
     compileSdkVersion flutter.compileSdkVersion
-    // Required matching version for plugins
-    ndkVersion = "28.2.13676358"
+
+    // Keep the NDK version from your known-working Android 6 setup
+    ndkVersion = "26.1.10909125"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
-        coreLibraryDesugaringEnabled true
     }
 
     kotlinOptions {
@@ -63,64 +47,29 @@ android {
 
     defaultConfig {
         applicationId "com.anandnet.harmonymusic"
+
+        // Explicit Android 6.0 / API 23 support
         minSdkVersion 23
+
         targetSdkVersion flutter.targetSdkVersion
+
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
-        
-        // MultiDex required for Android 6 apps with many dependencies
+
+        // Needed if the final dependency set exceeds the dex limit
         multiDexEnabled true
-
-        def auth0Domain = "auth0.invalid"
-        def auth0Scheme = "harmonymusic"
-        def envFile = rootProject.file("../.env")
-        if (envFile.exists()) {
-            envFile.eachLine { line ->
-                def parts = line.split("=", 2)
-                if (parts.size() == 2) {
-                    if (parts[0].trim() == "AUTH0_DOMAIN") auth0Domain = parts[1].trim()
-                    if (parts[0].trim() == "AUTH0_REDIRECT_SCHEME") auth0Scheme = parts[1].trim()
-                }
-            }
-        }
-        manifestPlaceholders += [auth0Domain: auth0Domain, auth0Scheme: auth0Scheme]
-    }
-
-    signingConfigs {
-        debug {
-            v1SigningEnabled true
-            v2SigningEnabled true
-        }
-
-        release {
-            v1SigningEnabled true
-            v2SigningEnabled true
-            if (hasReleaseSigning) {
-                storeFile file(releaseKeystorePath)
-                storePassword releaseKeystorePassword
-                keyAlias releaseKeyAlias
-                keyPassword releaseKeyPassword
-            }
-        }
     }
 
     buildTypes {
         debug {
-            applicationIdSuffix ".dev"
-            signingConfig signingConfigs.debug
-        }
-
-        profile {
-            applicationIdSuffix ".profile"
             signingConfig signingConfigs.debug
         }
 
         release {
-            applicationIdSuffix ".prod"
-            signingConfig hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
+            signingConfig signingConfigs.debug
         }
     }
-    
+
     namespace 'com.anandnet.harmonymusic'
 }
 
@@ -129,10 +78,12 @@ flutter {
 }
 
 dependencies {
-    // Required for Java 17 features on Android 6
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
-    
+    // Multidex support for older Android versions
     implementation 'com.android.support:multidex:2.0.1'
+
+    // Existing splash screen dependency
     implementation 'androidx.core:core-splashscreen:1.0.0-beta02'
+
+    // Nearby Connections / Google Nearby
     implementation 'com.google.android.gms:play-services-nearby:19.3.0'
 }
